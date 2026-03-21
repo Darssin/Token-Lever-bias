@@ -8,7 +8,6 @@ import argparse
 import collections
 from typing import Dict, List, Iterable, Tuple, Any, Optional
 
-
 def open_maybe_gzip(path: str):
     if path.endswith(".gz"):
         return gzip.open(path, "rt", encoding="utf-8")

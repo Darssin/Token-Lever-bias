@@ -1,6 +1,5 @@
 import argparse
 from pathlib import Path
-
 from accelerate import Accelerator
 
 from pretrain_json_pipeline.common import (

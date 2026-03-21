@@ -1,7 +1,6 @@
 # Pretrain JSON Pipeline
 
 This folder contains a standalone pipeline for data shaped like `*.pretrain.json`.
-
 Input format:
 - one JSON file mapping `item_id -> item fields`
 - `sid` may be missing

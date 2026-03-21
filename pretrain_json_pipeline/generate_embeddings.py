@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument("--plm_name", type=str, default="qwen")
     parser.add_argument("--features", nargs="+", default=["title", "description"])
     parser.add_argument("--max_sent_len", type=int, default=2048)
-    parser.add_argument("--embedding_batch_size", type=int, default=1024)
+    parser.add_argument("--embedding_batch_size", type=int, default=128)
     parser.add_argument("--word_drop_ratio", type=float, default=-1)
     parser.add_argument("--seed", type=int, default=2024)
     return parser.parse_args()

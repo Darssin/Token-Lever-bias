@@ -5,6 +5,19 @@ from pathlib import Path
 
 import pandas as pd
 from datasets import Dataset
+import torch
+
+from torch.utils.tensorboard import SummaryWriter
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    DataCollatorForLanguageModeling,
+    EarlyStoppingCallback,
+    HfArgumentParser, 
+    Trainer,
+    TrainerCallback,
+    TrainingArguments,
+)
 
 
 def parse_script_args():
@@ -100,19 +113,6 @@ class EmbeddingRangeMasker:
 
 
 def main():
-    import torch
-
-    from torch.utils.tensorboard import SummaryWriter
-    from transformers import (
-        AutoModelForCausalLM,
-        AutoTokenizer,
-        DataCollatorForLanguageModeling,
-        EarlyStoppingCallback,
-        Trainer,
-        TrainerCallback,
-        TrainingArguments,
-    )
-
     script_parser = parse_script_args()
     script_args, remaining_args = script_parser.parse_known_args()
     hf_parser = HfArgumentParser((TrainingArguments,))

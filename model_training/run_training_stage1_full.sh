@@ -56,7 +56,7 @@ deepspeed "$SCRIPT_DIR/train_align_full.py" \
   --adam_beta2 0.999 \
   --adam_epsilon 1e-8 \
   --max_grad_norm 1.0 \
-  --dataloader_num_workers "${DATALOADER_NUM_WORKERS:-4}" \
+  --dataloader_num_workers "${DATALOADER_NUM_WORKERS:-16}" \
   --remove_unused_columns False 2>&1 | tee -a "$LOG_FILE"
 
 echo "Stage 1 full fine-tuning completed. Output saved to: $TRAINING_OUTPUT_DIR"

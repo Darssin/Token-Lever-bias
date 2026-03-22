@@ -1,25 +1,26 @@
 #!/usr/bin/env python3
 
-from __future__ import annotations
-
-from dataclasses import dataclass
+import argparse
 from pathlib import Path
 
 import pandas as pd
 from datasets import Dataset
 
 
-@dataclass
-class ScriptArguments:
-    model_dir: str = "./expanded_model"
-    train_data_path: str = "./training_align_data_train.parquet"
-    val_data_path: str = "./training_align_data_valid.parquet"
-    max_length: int = 4096
-    sample_size: int | None = None
-    tensorboard_dir: str | None = None
+def parse_script_args():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--model_dir", default="./expanded_model")
+    parser.add_argument("--train_data_path", default="./training_align_data_train.parquet")
+    parser.add_argument("--val_data_path", default="./training_align_data_valid.parquet")
+    parser.add_argument("--max_length", type=int, default=4096)
+    parser.add_argument("--sample_size", type=int, default=None)
+    parser.add_argument("--tensorboard_dir", default=None)
+    parser.add_argument("--freeze_llm", type=lambda x: str(x).lower() == "true", default=True)
+    parser.add_argument("--start_optimize_embedding_index", type=int, default=0)
+    return parser
 
 
-def prepare_dataset(data_path: Path, sample_size: int | None = None, local_rank: int = 0) -> Dataset:
+def prepare_dataset(data_path, sample_size=None, local_rank=0):
     if local_rank == 0:
         print(f"Loading parquet file: {data_path}")
     data_pq = pd.read_parquet(data_path)
@@ -42,7 +43,7 @@ def prepare_dataset(data_path: Path, sample_size: int | None = None, local_rank:
     return Dataset.from_dict({"text": texts})
 
 
-def tokenize_function(examples, tokenizer, max_length: int):
+def tokenize_function(examples, tokenizer, max_length):
     return tokenizer(
         examples["text"],
         padding="longest",
@@ -59,21 +60,63 @@ def count_parameters(model):
     return total, trainable
 
 
+def freeze_for_embedding_and_lm_head(model, freeze_llm):
+    trainable_names = []
+    if not freeze_llm:
+        for name, param in model.named_parameters():
+            param.requires_grad = True
+            trainable_names.append(name)
+        return trainable_names
+
+    for param in model.parameters():
+        param.requires_grad = False
+
+    for name, param in model.named_parameters():
+        if "embed_tokens" in name or "lm_head" in name:
+            param.requires_grad = True
+            trainable_names.append(name)
+    return trainable_names
+
+
+class EmbeddingRangeMasker:
+    def __init__(self, model, start_index):
+        self.start_index = start_index
+        self.embed_tokens_weight = model.get_input_embeddings().weight
+        output_embeddings = model.get_output_embeddings()
+        self.lm_head_weight = output_embeddings.weight if output_embeddings is not None else None
+
+        self.embed_tokens_frozen_prefix = self.embed_tokens_weight[:start_index].detach().clone()
+        self.lm_head_frozen_prefix = (
+            self.lm_head_weight[:start_index].detach().clone()
+            if self.lm_head_weight is not None
+            else None
+        )
+
+    def restore_frozen_prefix(self):
+        with torch.no_grad():
+            self.embed_tokens_weight[: self.start_index].copy_(self.embed_tokens_frozen_prefix)
+            if self.lm_head_weight is not None and self.lm_head_frozen_prefix is not None:
+                self.lm_head_weight[: self.start_index].copy_(self.lm_head_frozen_prefix)
+
+
 def main():
+    import torch
+
     from torch.utils.tensorboard import SummaryWriter
     from transformers import (
         AutoModelForCausalLM,
         AutoTokenizer,
         DataCollatorForLanguageModeling,
         EarlyStoppingCallback,
-        HfArgumentParser,
         Trainer,
         TrainerCallback,
         TrainingArguments,
     )
 
-    parser = HfArgumentParser((ScriptArguments, TrainingArguments))
-    script_args, training_args = parser.parse_args_into_dataclasses()
+    script_parser = parse_script_args()
+    script_args, remaining_args = script_parser.parse_known_args()
+    hf_parser = HfArgumentParser((TrainingArguments,))
+    (training_args,) = hf_parser.parse_args_into_dataclasses(args=remaining_args)
     training_args.label_names = ["labels"]
 
     model_dir = Path(script_args.model_dir).resolve()
@@ -86,11 +129,17 @@ def main():
         raise FileNotFoundError(f"Training data not found: {train_data_path}")
     if not val_data_path.exists():
         raise FileNotFoundError(f"Validation data not found: {val_data_path}")
+    if script_args.freeze_llm and script_args.start_optimize_embedding_index <= 0:
+        raise ValueError("freeze_llm=True requires start_optimize_embedding_index > 0.")
 
     if training_args.local_rank == 0:
         print(f"Using model_dir: {model_dir}")
         print(f"Training data path: {train_data_path}")
         print(f"Validation data path: {val_data_path}")
+        print(
+            "freeze_llm="
+            f"{script_args.freeze_llm}, start_optimize_embedding_index={script_args.start_optimize_embedding_index}"
+        )
 
     tensorboard_dir = Path(
         script_args.tensorboard_dir
@@ -111,11 +160,22 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
     tokenizer.pad_token = tokenizer.eos_token
 
+    trainable_names = freeze_for_embedding_and_lm_head(model, script_args.freeze_llm)
+    if not trainable_names:
+        raise ValueError("No trainable parameters matched embed_tokens/lm_head.")
+
+    embedding_masker = None
+    if script_args.freeze_llm:
+        embedding_masker = EmbeddingRangeMasker(model, script_args.start_optimize_embedding_index)
+
     total_params, trainable_params = count_parameters(model)
     if training_args.local_rank == 0:
-        print(f"Full fine-tuning enabled")
+        print("Embedding/lm_head training enabled")
         print(f"Total parameters: {total_params}")
         print(f"Trainable parameters: {trainable_params}")
+        print("Trainable parameter names:")
+        for name in trainable_names:
+            print(f"  {name}")
 
     train_dataset = prepare_dataset(
         train_data_path,
@@ -142,7 +202,7 @@ def main():
     )
 
     class TensorBoardMetricsCallback(TrainerCallback):
-        def __init__(self, log_dir: Path):
+        def __init__(self, log_dir):
             self.log_dir = log_dir
             self.writer = None
 
@@ -175,6 +235,14 @@ def main():
             if self.writer is not None:
                 self.writer.close()
 
+    class EmbeddingRangeMaskCallback(TrainerCallback):
+        def __init__(self, masker):
+            self.masker = masker
+
+        def on_step_end(self, args, state, control, **kwargs):
+            if self.masker is not None:
+                self.masker.restore_frozen_prefix()
+
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -184,6 +252,7 @@ def main():
         callbacks=[
             EarlyStoppingCallback(early_stopping_patience=2),
             TensorBoardMetricsCallback(tensorboard_dir),
+            EmbeddingRangeMaskCallback(embedding_masker),
         ],
     )
 

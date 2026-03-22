@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 
-from __future__ import annotations
-
 import argparse
 from pathlib import Path
 
 
-def get_special_tokens(num_levels: int = 4, codebook_size: int = 256) -> list[str]:
+def get_special_tokens(num_levels=4, codebook_size=256):
     special_tokens = ["<|sid_begin|>", "<|sid_end|>"]
     for level in range(num_levels):
         prefix = f"s_{chr(97 + level)}"
@@ -15,7 +13,7 @@ def get_special_tokens(num_levels: int = 4, codebook_size: int = 256) -> list[st
     return special_tokens
 
 
-def round_up_to_multiple(value: int, multiple: int) -> int:
+def round_up_to_multiple(value, multiple):
     if multiple <= 0:
         raise ValueError("multiple must be a positive integer")
     return ((value + multiple - 1) // multiple) * multiple
@@ -34,12 +32,12 @@ def parse_args():
 
 
 def expand_vocabulary(
-    base_model_dir: Path,
-    save_dir: Path,
-    num_levels: int,
-    codebook_size: int,
-    pad_to_multiple: int,
-) -> None:
+    base_model_dir,
+    save_dir,
+    num_levels,
+    codebook_size,
+    pad_to_multiple,
+):
     import torch
     from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
@@ -84,7 +82,7 @@ def expand_vocabulary(
     print(f"Sample SID text encoded shape: {sample_ids.shape}")
 
 
-def main() -> None:
+def main():
     args = parse_args()
     expand_vocabulary(
         base_model_dir=args.base_model_dir.resolve(),

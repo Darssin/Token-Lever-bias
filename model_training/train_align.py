@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 
-from __future__ import annotations
-
-from dataclasses import dataclass
+import argparse
 from pathlib import Path
 
 import pandas as pd
 from datasets import Dataset
 
 
-@dataclass
-class ScriptArguments:
-    model_dir: str = "./expanded_model"
-    train_data_path: str = "./training_align_data_train.parquet"
-    val_data_path: str = "./training_align_data_valid.parquet"
-    num_levels: int = 4
-    codebook_size: int = 256
-    max_length: int = 4096
-    sample_size: int | None = None
-    tensorboard_dir: str | None = None
+def parse_script_args():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--model_dir", default="./expanded_model")
+    parser.add_argument("--train_data_path", default="./training_align_data_train.parquet")
+    parser.add_argument("--val_data_path", default="./training_align_data_valid.parquet")
+    parser.add_argument("--num_levels", type=int, default=4)
+    parser.add_argument("--codebook_size", type=int, default=256)
+    parser.add_argument("--max_length", type=int, default=4096)
+    parser.add_argument("--sample_size", type=int, default=None)
+    parser.add_argument("--tensorboard_dir", default=None)
+    return parser
 
 
-def prepare_dataset(data_path: Path, sample_size: int | None = None, local_rank: int = 0) -> Dataset:
+def prepare_dataset(data_path, sample_size=None, local_rank=0):
     if local_rank == 0:
         print(f"Loading parquet file: {data_path}")
     data_pq = pd.read_parquet(data_path)
@@ -44,7 +43,7 @@ def prepare_dataset(data_path: Path, sample_size: int | None = None, local_rank:
     return Dataset.from_dict({"text": texts})
 
 
-def tokenize_function(examples, tokenizer, max_length: int):
+def tokenize_function(examples, tokenizer, max_length):
     return tokenizer(
         examples["text"],
         padding="longest",
@@ -55,7 +54,7 @@ def tokenize_function(examples, tokenizer, max_length: int):
     )
 
 
-def get_special_tokens(num_levels: int = 4, codebook_size: int = 256) -> list[str]:
+def get_special_tokens(num_levels=4, codebook_size=256):
     special_tokens = ["<|sid_begin|>", "<|sid_end|>"]
     for level in range(num_levels):
         prefix = f"s_{chr(97 + level)}"
@@ -72,14 +71,15 @@ def main():
         AutoTokenizer,
         DataCollatorForLanguageModeling,
         EarlyStoppingCallback,
-        HfArgumentParser,
         Trainer,
         TrainerCallback,
         TrainingArguments,
     )
 
-    parser = HfArgumentParser((ScriptArguments, TrainingArguments))
-    script_args, training_args = parser.parse_args_into_dataclasses()
+    script_parser = parse_script_args()
+    script_args, remaining_args = script_parser.parse_known_args()
+    hf_parser = HfArgumentParser((TrainingArguments,))
+    (training_args,) = hf_parser.parse_args_into_dataclasses(args=remaining_args)
     training_args.label_names = ["labels"]
 
     model_dir = Path(script_args.model_dir).resolve()
@@ -172,7 +172,7 @@ def main():
     )
 
     class TensorBoardMetricsCallback(TrainerCallback):
-        def __init__(self, log_dir: Path):
+        def __init__(self, log_dir):
             self.log_dir = log_dir
             self.writer = None
 

@@ -1,26 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -lt 4 ]; then
-  echo "Usage: bash run_training_stage1_full.sh <base_model_dir> <dataset_dir> <expanded_model_dir> <training_output_dir>"
+if [ "$#" -lt 3 ]; then
+  echo "Usage: bash run_training_stage1_full.sh <expanded_model_dir> <dataset_dir> <training_output_dir>"
   echo "dataset_dir should contain training_align_data_train.parquet and training_align_data_valid.parquet"
   exit 1
 fi
 
-BASE_MODEL_DIR="$1"
+EXPANDED_MODEL_DIR="$1"
 DATASET_DIR="$2"
-EXPANDED_MODEL_DIR="$3"
-TRAINING_OUTPUT_DIR="$4"
+TRAINING_OUTPUT_DIR="$3"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TRAIN_DATA="${DATASET_DIR}/training_align_data_train.parquet"
 VAL_DATA="${DATASET_DIR}/training_align_data_valid.parquet"
+LOG_FILE="${LOG_FILE:-$(pwd)/train.LOG}"
 
 mkdir -p "$TRAINING_OUTPUT_DIR"
-
-python "$SCRIPT_DIR/expand_vocab.py" \
-  --base_model_dir "$BASE_MODEL_DIR" \
-  --save_dir "$EXPANDED_MODEL_DIR"
+mkdir -p "$(dirname "$LOG_FILE")"
 
 LAUNCHER="${LAUNCHER:-python}"
 
@@ -55,7 +52,7 @@ if [ "$LAUNCHER" = "deepspeed" ]; then
     --adam_epsilon 1e-8 \
     --max_grad_norm 1.0 \
     --dataloader_num_workers "${DATALOADER_NUM_WORKERS:-4}" \
-    --remove_unused_columns False
+    --remove_unused_columns False 2>&1 | tee -a "$LOG_FILE"
 else
   python "$SCRIPT_DIR/train_align_full.py" \
     --model_dir "$EXPANDED_MODEL_DIR" \
@@ -87,7 +84,8 @@ else
     --adam_epsilon 1e-8 \
     --max_grad_norm 1.0 \
     --dataloader_num_workers "${DATALOADER_NUM_WORKERS:-4}" \
-    --remove_unused_columns False
+    --remove_unused_columns False 2>&1 | tee -a "$LOG_FILE"
 fi
 
 echo "Stage 1 full fine-tuning completed. Output saved to: $TRAINING_OUTPUT_DIR"
+echo "Training log appended to: $LOG_FILE"

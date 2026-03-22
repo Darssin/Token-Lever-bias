@@ -224,7 +224,7 @@ def resolve_stage1_paths(input_json, output_dir, plm_name):
 def resolve_stage2_paths(input_json, output_dir, output_json):
     input_path = Path(input_json)
     stem = input_path.stem
-    out_dir = Path(output_dir) if output_dir else input_path.parent / "pretrain_json_outputs"
+    out_dir = Path(output_dir) if output_dir else input_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
     final_json = Path(output_json) if output_json else out_dir / f"{stem}.with_sid.json"
     index_path = out_dir / f"{stem}.index.json"

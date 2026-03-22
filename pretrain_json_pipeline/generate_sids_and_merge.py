@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 
 import numpy as np
 
@@ -64,14 +65,23 @@ def main():
 
     index_json = build_index_json(item_ids, codes, sid_offset=args.sid_offset)
     merged_json = merge_sid_into_json(item_map, item_ids, codes, sid_offset=args.sid_offset)
+    stripped_item_map = strip_sid_fields(item_map)
+    should_save_item_meta = stripped_item_map != item_map
 
     save_json(index_json, str(index_path))
     save_json(merged_json, str(output_json))
-    save_json(strip_sid_fields(item_map), str(item_meta_path))
 
     print(f"Saved index JSON to {index_path}")
     print(f"Saved merged JSON to {output_json}")
-    print(f"Saved item metadata JSON to {item_meta_path}")
+
+    if should_save_item_meta:
+        save_json(stripped_item_map, str(item_meta_path))
+        print(f"Saved item metadata JSON to {item_meta_path}")
+    else:
+        print(
+            "Skipped item metadata JSON because input_json has no sid field; "
+            f"it would duplicate {Path(args.input_json)}"
+        )
 
 
 if __name__ == "__main__":

@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # bash Token-Lever-bias/pretrain_json_pipeline/generate_all_datasets.sh \
-#   /path/to/user_sequence.txt \
-#   /path/to/item_meta.with_sid.json \
-#   /path/to/output_dir
+#   /mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_beauty/user_sequence.txt \
+#   /mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_beauty/item_meta.with_sid.json \
+#   /mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_datasets
 
 if [ "$#" -lt 3 ]; then
   echo "Usage: bash generate_all_datasets.sh <user_sequence.txt> <item_meta.with_sid.json> <output_dir>"

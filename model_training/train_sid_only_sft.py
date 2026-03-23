@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 import torch
 from datasets import Dataset
-from peft import LoraConfig, TaskType, get_peft_model
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -23,14 +22,6 @@ class ModelArguments:
     model_name_or_path: Optional[str] = field(
         default="../basemodel/Qwen3-1-7B-expand",
         metadata={"help": "Path to pretrained model"},
-    )
-    use_lora: bool = field(default=True, metadata={"help": "Whether to use LoRA"})
-    lora_r: int = field(default=64, metadata={"help": "LoRA rank"})
-    lora_alpha: int = field(default=64, metadata={"help": "LoRA alpha"})
-    lora_dropout: float = field(default=0.05, metadata={"help": "LoRA dropout"})
-    lora_target_modules: str = field(
-        default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
-        metadata={"help": "LoRA target modules"},
     )
 
 
@@ -73,6 +64,16 @@ def prepare_dataset(data_path, sample_size=None, local_rank=0):
             print(f"[{i}] output: {records['output_text'][i][:200]}")
 
     return Dataset.from_dict(records)
+
+
+def preview_first_sample(dataset, title, local_rank=0):
+    if local_rank != 0 or len(dataset) == 0:
+        return
+
+    first_sample = dataset[0]
+    print(f"\nFirst sample from {title}:")
+    for key, value in first_sample.items():
+        print(f"{key}: {value}")
 
 
 def tokenize_example(example, tokenizer, max_length):
@@ -189,22 +190,12 @@ if __name__ == "__main__":
         print(f"First 10 valid special tokens: {valid_special_tokens[:10]}")
         print(f"Training token IDs range: {min(valid_special_token_ids)} to {max(valid_special_token_ids)}")
 
-    if model_args.use_lora:
-        target_modules = model_args.lora_target_modules.split(",")
-        lora_config = LoraConfig(
-            r=model_args.lora_r,
-            lora_alpha=model_args.lora_alpha,
-            lora_dropout=model_args.lora_dropout,
-            target_modules=target_modules,
-            bias="none",
-            task_type=TaskType.CAUSAL_LM,
-            trainable_token_indices={
-                "embed_tokens": valid_special_token_ids,
-            },
-        )
-
-        model = get_peft_model(model, lora_config)
-        model.print_trainable_parameters()
+    if training_args.local_rank == 0:
+        total_params = sum(param.numel() for param in model.parameters())
+        trainable_params = sum(param.numel() for param in model.parameters() if param.requires_grad)
+        print(f"Full-parameter training enabled")
+        print(f"Total parameters: {total_params}")
+        print(f"Trainable parameters: {trainable_params}")
 
     if training_args.local_rank == 0:
         print("\nLoading training dataset...")
@@ -222,6 +213,8 @@ if __name__ == "__main__":
         local_rank=training_args.local_rank,
     )
 
+    preview_first_sample(train_dataset, "raw training dataset", training_args.local_rank)
+
     if training_args.local_rank == 0:
         print("Tokenizing training dataset...")
     train_dataset = train_dataset.map(
@@ -237,6 +230,8 @@ if __name__ == "__main__":
         remove_columns=val_dataset.column_names,
         desc="Tokenizing validation data",
     )
+
+    preview_first_sample(train_dataset, "tokenized training dataset", training_args.local_rank)
 
     data_collator = CustomDataCollator(tokenizer=tokenizer)
 

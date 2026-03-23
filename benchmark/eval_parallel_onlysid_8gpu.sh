@@ -17,7 +17,7 @@ TOTAL_SAMPLES=22363
 SAMPLES_PER_GPU=$((TOTAL_SAMPLES / 8))
 BATCH_SIZE=4
 NUM_BEAMS=10
-MAX_TOKENS=6
+MAX_TOKENS=5
 
 echo "Precomputing exact trie tree for only-sid evaluation..."
 if [ ! -f "$GLOBAL_TRIE_FILE" ]; then

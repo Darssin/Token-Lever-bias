@@ -24,6 +24,13 @@ def extract_sid_from_text(text):
     return (text or "").strip()
 
 
+def sid_to_suffix_token_sequence(sid, tokenizer):
+    full_tokens = tokenizer.encode(sid, add_special_tokens=False)
+    if len(full_tokens) < 2:
+        return []
+    return full_tokens[1:]
+
+
 def build_global_trie(test_parquet_file, model_path, output_file):
     print(f"Loading test data from: {test_parquet_file}")
     df = pd.read_parquet(test_parquet_file)
@@ -52,7 +59,9 @@ def build_global_trie(test_parquet_file, model_path, output_file):
     print("Converting SIDs to token sequences...")
     sid_token_sequences = []
     for sid in valid_sids:
-        sid_token_sequences.append(tokenizer.encode(sid, add_special_tokens=False))
+        suffix_tokens = sid_to_suffix_token_sequence(sid, tokenizer)
+        if suffix_tokens:
+            sid_token_sequences.append(suffix_tokens)
 
     exact_trie = defaultdict(lambda: defaultdict(set))
     max_length = max(len(seq) for seq in sid_token_sequences) if sid_token_sequences else 0

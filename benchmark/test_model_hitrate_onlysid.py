@@ -19,6 +19,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 SID_PATTERN = r'<\|sid_begin\|><s_a_\d+><s_b_\d+><s_c_\d+><s_d_\d+><\|sid_end\|>'
+SID_SUFFIX_PATTERN = r'<s_a_\d+><s_b_\d+><s_c_\d+><s_d_\d+><\|sid_end\|>'
 
 
 def parse_args():
@@ -32,7 +33,7 @@ def parse_args():
     parser.add_argument("--sample_offset", type=int, default=0)
     parser.add_argument("--gpu_id", type=int, default=0)
     parser.add_argument("--metrics", type=str, default="hit@1,hit@5,hit@10,ndcg@5,ndcg@10")
-    parser.add_argument("--max_new_tokens", type=int, default=6)
+    parser.add_argument("--max_new_tokens", type=int, default=5)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top_p", type=float, default=0.9)
     parser.add_argument("--print_generations", action="store_true", default=False)
@@ -72,6 +73,22 @@ def extract_sid_from_text(text):
     if match:
         return match.group(0)
     return (text or "").strip().replace(" ", "")
+
+
+def normalize_predicted_sid(text):
+    text = (text or "").strip().replace(" ", "")
+    full_match = re.search(SID_PATTERN, text)
+    if full_match:
+        return full_match.group(0)
+
+    suffix_match = re.search(SID_SUFFIX_PATTERN, text)
+    if suffix_match:
+        return "<|sid_begin|>" + suffix_match.group(0)
+
+    if text.startswith("<s_a_"):
+        return "<|sid_begin|>" + text
+
+    return text
 
 
 def load_model(model_path, logger=None):
@@ -136,7 +153,8 @@ class TestCollator:
 
     def __call__(self, batch):
         return {
-            "inputs": [d["input_text"] for d in batch],
+            "inputs": [d["input_text"] + "<|sid_begin|>" for d in batch],
+            "raw_inputs": [d["input_text"] for d in batch],
             "targets": [d["target_text"] for d in batch],
             "user_ids": [d["user_id"] for d in batch],
         }
@@ -178,7 +196,7 @@ def build_prefix_allowed_tokens_fn(trie_data, tokenizer, current_prompt_lengths)
 
 def get_topk_results(predictions, scores, targets, k):
     results = []
-    normalized_predictions = [extract_sid_from_text(pred) for pred in predictions]
+    normalized_predictions = [normalize_predicted_sid(pred) for pred in predictions]
 
     for b in range(len(targets)):
         batch_preds = normalized_predictions[b * k: (b + 1) * k]
@@ -252,6 +270,7 @@ def run_evaluation(args):
         progress_bar = tqdm(loader, desc="Testing")
         for step, batch in enumerate(progress_bar):
             inputs_texts = batch["inputs"]
+            raw_inputs = batch["raw_inputs"]
             targets = batch["targets"]
             bs = len(targets)
 
@@ -325,10 +344,11 @@ def run_evaluation(args):
                     start = i * num_beams
                     end = start + num_beams
                     logger.info(f"----- SAMPLE {step * bs + i} -----")
-                    logger.info(f"INPUT: {inputs_texts[i]}")
+                    logger.info(f"INPUT: {raw_inputs[i]}")
+                    logger.info(f"INPUT_WITH_SID_BEGIN: {inputs_texts[i]}")
                     logger.info("CANDIDATES:")
                     for rank, (cand, score) in enumerate(zip(decoded[start:end], scores_list[start:end]), start=1):
-                        logger.info(f"  Rank {rank}: score={score:.4f} -> {extract_sid_from_text(cand)}")
+                        logger.info(f"  Rank {rank}: score={score:.4f} -> {normalize_predicted_sid(cand)}")
                     logger.info(f"TARGET: {targets[i]}")
                     logger.info("-" * 50)
 

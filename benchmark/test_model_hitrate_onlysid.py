@@ -170,14 +170,16 @@ def load_global_trie(global_trie_file):
     return trie_data
 
 
-def build_prefix_allowed_tokens_fn(trie_data, tokenizer, current_prompt_lengths):
+def build_prefix_allowed_tokens_fn(trie_data, tokenizer, prompt_padded_length):
     allowed_tokens = trie_data["exact_trie"]
     eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
 
     def prefix_allowed_tokens_fn(batch_id, sentence):
         sentence = sentence.tolist()
-        prompt_len = current_prompt_lengths[batch_id % len(current_prompt_lengths)]
-        generated = sentence[prompt_len:]
+        # `sentence` contains the full left-padded prompt plus generated tokens.
+        # We must slice from the padded input width instead of the non-pad token count,
+        # otherwise part of the prompt is mistakenly treated as generated output.
+        generated = sentence[prompt_padded_length:]
 
         if len(generated) == 0:
             if 0 in allowed_tokens:
@@ -281,13 +283,13 @@ def run_evaluation(args):
                 truncation=True,
                 max_length=tokenizer.model_max_length,
             )
-            prompt_lengths = enc["attention_mask"].sum(dim=1).tolist()
+            prompt_padded_length = enc["input_ids"].shape[1]
             enc = {k: v.to(model.device) for k, v in enc.items()}
 
             prefix_allowed_tokens_fn = build_prefix_allowed_tokens_fn(
                 trie_data,
                 tokenizer,
-                prompt_lengths,
+                prompt_padded_length,
             )
 
             num_beams = args.num_beams

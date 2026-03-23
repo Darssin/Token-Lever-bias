@@ -7,8 +7,11 @@ SSH_PROXY='wsCli -a dt02.easyalgo.jd.com -t d3ViaW50YW8uNiZ3dWJpbnRhby11c2VyLXBy
 
 # --- 执行同步的函数 ---
 do_sync() {
-    # 使用 rsync 进行增量同步
-    rsync -avz --delete \
+    # 核心修改：去掉了 --delete 参数
+    # -a: 归档模式 (保留权限、时间戳等)
+    # -v: 详细输出 (方便调试时观察)
+    # -z: 压缩传输
+    rsync -avz \
         -e "ssh -o ProxyCommand='$SSH_PROXY'" \
         --exclude '.git/' \
         --exclude '.vscode/' \
@@ -17,16 +20,13 @@ do_sync() {
         "$LOCAL_DIR" "wubintao.6@localhost:$REMOTE_DIR"
 }
 
-echo "--- 正在启动轮询同步模式 (每 2 秒检测一次) ---"
+echo "--- 正在启动增量同步模式（不删除远程冗余文件） ---"
 echo "--- 按下 Ctrl + C 停止同步 ---"
 
-# 使用死循环代替 fswatch
 while true; do
-    # 也可以加上输出提示，但为了清爽建议只在同步时输出
+    # 执行同步
     do_sync > /dev/null 2>&1 
     
-    # 如果你想看到同步成功的日志，可以取消下面这一行的注释
-    # echo "[$(date +%H:%M:%S)] 轮询同步中..."
-    
+    # 轮询间隔
     sleep 2
 done

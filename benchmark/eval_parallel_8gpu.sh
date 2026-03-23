@@ -4,9 +4,9 @@
 
 echo "🚀 Starting 8-GPU Parallel Evaluation..."
 
-MERGED_MODEL_PATH="../train/results/beauty_sid_rec/checkpoint-8388"
+MERGED_MODEL_PATH="/mnt/cfs/chubaofs_ads_train_image/wubintao/models/TLB_demo/Beauty/only_sid_sft1"
 ADDITIONAL_LORA_PATH=""
-TEST_PARQUET="../data/training_prediction_sid_data_test.parquet"
+TEST_PARQUET="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/training_sid_only_data_test.parquet"
 GLOBAL_TRIE_FILE="./exact_trie.pkl"
 mkdir -p logs
 TS=$(date +%Y%m%d_%H%M%S)

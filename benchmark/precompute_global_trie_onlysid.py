@@ -63,23 +63,24 @@ def build_global_trie(test_parquet_file, model_path, output_file):
         if suffix_tokens:
             sid_token_sequences.append(suffix_tokens)
 
-    exact_trie = defaultdict(lambda: defaultdict(set))
     max_length = max(len(seq) for seq in sid_token_sequences) if sid_token_sequences else 0
     eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
+    exact_trie = defaultdict(lambda: defaultdict(set))
 
     for seq in sid_token_sequences:
         for pos in range(len(seq)):
             current_token = seq[pos]
             if pos + 1 < len(seq):
-                exact_trie[pos][current_token].add(seq[pos + 1])
+                next_token = seq[pos + 1]
+                exact_trie[pos][current_token].add(next_token)
             else:
                 exact_trie[pos][current_token].add(eos_id)
 
     final_exact_trie = {}
-    for pos, token_map in exact_trie.items():
+    for pos in exact_trie:
         final_exact_trie[pos] = {}
-        for token_id, next_tokens in token_map.items():
-            final_exact_trie[pos][token_id] = list(next_tokens)
+        for token_id in exact_trie[pos]:
+            final_exact_trie[pos][token_id] = list(exact_trie[pos][token_id])
 
     trie_data = {
         "exact_trie": final_exact_trie,

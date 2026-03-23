@@ -75,19 +75,18 @@ def extract_sid_from_text(text):
     return (text or "").strip().replace(" ", "")
 
 
-def normalize_predicted_sid(text):
+def extract_last_sid_from_text(text):
+    matches = re.findall(SID_PATTERN, text or "")
+    if matches:
+        return matches[-1]
+
+    suffix_matches = re.findall(SID_SUFFIX_PATTERN, (text or "").replace(" ", ""))
+    if suffix_matches:
+        return "<|sid_begin|>" + suffix_matches[-1]
+
     text = (text or "").strip().replace(" ", "")
-    full_match = re.search(SID_PATTERN, text)
-    if full_match:
-        return full_match.group(0)
-
-    suffix_match = re.search(SID_SUFFIX_PATTERN, text)
-    if suffix_match:
-        return "<|sid_begin|>" + suffix_match.group(0)
-
     if text.startswith("<s_a_"):
         return "<|sid_begin|>" + text
-
     return text
 
 
@@ -198,7 +197,7 @@ def build_prefix_allowed_tokens_fn(trie_data, tokenizer, prompt_padded_length):
 
 def get_topk_results(predictions, scores, targets, k):
     results = []
-    normalized_predictions = [normalize_predicted_sid(pred) for pred in predictions]
+    normalized_predictions = [extract_last_sid_from_text(pred) for pred in predictions]
 
     for b in range(len(targets)):
         batch_preds = normalized_predictions[b * k: (b + 1) * k]
@@ -329,9 +328,8 @@ def run_evaluation(args):
 
             output_ids = output["sequences"]
             sequences_scores = output.get("sequences_scores", None)
-            generated_only_ids = output_ids[:, enc["input_ids"].shape[1]:]
             decoded = tokenizer.batch_decode(
-                generated_only_ids,
+                output_ids,
                 skip_special_tokens=False,
                 clean_up_tokenization_spaces=False,
             )
@@ -350,7 +348,7 @@ def run_evaluation(args):
                     logger.info(f"INPUT_WITH_SID_BEGIN: {inputs_texts[i]}")
                     logger.info("CANDIDATES:")
                     for rank, (cand, score) in enumerate(zip(decoded[start:end], scores_list[start:end]), start=1):
-                        logger.info(f"  Rank {rank}: score={score:.4f} -> {normalize_predicted_sid(cand)}")
+                        logger.info(f"  Rank {rank}: score={score:.4f} -> {extract_last_sid_from_text(cand)}")
                     logger.info(f"TARGET: {targets[i]}")
                     logger.info("-" * 50)
 

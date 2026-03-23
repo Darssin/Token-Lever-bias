@@ -50,27 +50,27 @@ train.parquet row example:
 {
   "user_id": "1",
   "input": "<|sid_begin|><s_a_3><s_b_19><s_c_8><s_d_44><|sid_end|><|sid_begin|><s_a_5><s_b_9><s_c_11><s_d_20><|sid_end|>",
-  "output": "<|sid_begin|><s_a_3><s_b_19><s_c_8><s_d_44><|sid_end|><|sid_begin|><s_a_5><s_b_9><s_c_11><s_d_20><|sid_end|>"
+  "output": "<|sid_begin|><s_a_7><s_b_1><s_c_6><s_d_13><|sid_end|>"
 }
 
 valid.parquet row example:
 {
   "user_id": "1",
   "input": "<|sid_begin|><s_a_3><s_b_19><s_c_8><s_d_44><|sid_end|><|sid_begin|><s_a_5><s_b_9><s_c_11><s_d_20><|sid_end|><|sid_begin|><s_a_7><s_b_1><s_c_6><s_d_13><|sid_end|>",
-  "output": "<|sid_begin|><s_a_3><s_b_19><s_c_8><s_d_44><|sid_end|><|sid_begin|><s_a_5><s_b_9><s_c_11><s_d_20><|sid_end|><|sid_begin|><s_a_7><s_b_1><s_c_6><s_d_13><|sid_end|>"
+  "output": "<|sid_begin|><s_a_2><s_b_4><s_c_10><s_d_18><|sid_end|>"
 }
 
 test.parquet row example:
 {
   "user_id": "1",
   "input": "<|sid_begin|><s_a_3><s_b_19><s_c_8><s_d_44><|sid_end|><|sid_begin|><s_a_5><s_b_9><s_c_11><s_d_20><|sid_end|><|sid_begin|><s_a_7><s_b_1><s_c_6><s_d_13><|sid_end|><|sid_begin|><s_a_2><s_b_4><s_c_10><s_d_18><|sid_end|>",
-  "output": "<|sid_begin|><s_a_3><s_b_19><s_c_8><s_d_44><|sid_end|><|sid_begin|><s_a_5><s_b_9><s_c_11><s_d_20><|sid_end|><|sid_begin|><s_a_7><s_b_1><s_c_6><s_d_13><|sid_end|><|sid_begin|><s_a_2><s_b_4><s_c_10><s_d_18><|sid_end|>"
+  "output": "<|sid_begin|><s_a_6><s_b_15><s_c_21><s_d_31><|sid_end|>"
 }
 
 Split rule:
-- train: remove the last 2 items, then use the remaining sid history as both input and output
-- valid: remove the last 1 item, then use the remaining sid history as both input and output
-- test: use the full sid history as both input and output
+- train: remove the last 2 items first, then use the remaining prefix to predict its final sid
+- valid: remove the last 1 item first, then use the remaining prefix to predict its final sid
+- test: use the full prefix to predict the original final sid
 """
 
 
@@ -114,7 +114,7 @@ def extract_sid_sequence(item_ids: list[str], user_id: str, item_meta: dict) -> 
 
 
 def build_dataset_entry(user_id: str, sid_sequence: list[str], tail_remove_count: int) -> dict | None:
-    if len(sid_sequence) <= tail_remove_count:
+    if len(sid_sequence) <= tail_remove_count + 1:
         return None
 
     candidate_sequence = (
@@ -122,14 +122,16 @@ def build_dataset_entry(user_id: str, sid_sequence: list[str], tail_remove_count
         if tail_remove_count > 0
         else sid_sequence
     )
-    if not candidate_sequence:
+    if len(candidate_sequence) < 2:
         return None
 
-    sid_text = "".join(candidate_sequence)
+    input_sid_text = "".join(candidate_sequence[:-1])
+    output_sid_text = candidate_sequence[-1]
+
     return {
         "user_id": user_id,
-        "input": sid_text,
-        "output": sid_text,
+        "input": input_sid_text,
+        "output": output_sid_text,
     }
 
 

@@ -134,8 +134,7 @@ def load_merged_model(model_path, additional_lora_path=None, logger=None):
     
     # Force GPU usage - direct approach without device_map
     if torch.cuda.is_available():
-        device = f"cuda:{torch.cuda.current_device()}"
-        logger.info(f"🔧 Forcing model to GPU: {device}")
+        device = f"cuda:{torch.cuda.current_device()}"        logger.info(f"Forcing model to GPU: {device}")
         
         # Direct load and move approach (most reliable)
         logger.info("Loading model and moving to GPU...")
@@ -147,15 +146,12 @@ def load_merged_model(model_path, additional_lora_path=None, logger=None):
         
         # Force move to GPU
         logger.info(f"Moving model to {device}...")
-        model = model.to(device)
-        logger.info(f"✅ Model moved to GPU")
+        model = model.to(device)        logger.info("Model moved to GPU")
         
         # Verify GPU placement
         first_param_device = next(model.parameters()).device
-        if 'cuda' in str(first_param_device):
-            logger.info(f"✅ Confirmed: Model is on {first_param_device}")
-        else:
-            logger.error(f"❌ Failed: Model is still on {first_param_device}")
+        if 'cuda' in str(first_param_device):            logger.info(f"Confirmed: Model is on {first_param_device}")
+        else:            logger.error(f"Failed: Model is still on {first_param_device}")
             raise RuntimeError("Failed to move model to GPU")
     else:
         model = AutoModelForCausalLM.from_pretrained(
@@ -165,8 +161,7 @@ def load_merged_model(model_path, additional_lora_path=None, logger=None):
     
     logger.info(f"Merged model loaded successfully, tokenizer vocab size: {tokenizer.vocab_size}")
     
-    # Debug: Check model device placement
-    logger.info(f"🔍 Model device info:")
+    # Debug: Check model device placement    logger.info("Model device info:")
     logger.info(f"  CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
         logger.info(f"  Current CUDA device: {torch.cuda.current_device()}")
@@ -180,10 +175,8 @@ def load_merged_model(model_path, additional_lora_path=None, logger=None):
         first_param = next(model.parameters())
         actual_device = first_param.device
         logger.info(f"  Model parameters actual device: {actual_device}")
-        if 'cpu' in str(actual_device):
-            logger.error("❌ MODEL IS STILL ON CPU! Need to fix this!")
-        else:
-            logger.info(f"✅ Model is correctly on GPU: {actual_device}")
+        if 'cpu' in str(actual_device):            logger.error("MODEL IS STILL ON CPU! Need to fix this!")
+        else:            logger.info(f"Model is correctly on GPU: {actual_device}")
     else:
         first_param = next(model.parameters())
         logger.info(f"  Model parameters device: {first_param.device}")
@@ -488,8 +481,7 @@ def extract_assistant_response(generated_text):
 def run_evaluation(args):
     """Main evaluation function"""
     set_seed(args.seed)
-    logger = setup_logging(args.log_file)
-    logger.info(f"🚀 Starting Two-stage Model Hit Rate Evaluation [GPU {args.gpu_id}]")
+    logger = setup_logging(args.log_file)    logger.info(f"Starting Two-stage Model Hit Rate Evaluation [GPU {args.gpu_id}]")
     logger.info(f"Args: {vars(args)}")
     
     # 1. Load merged model
@@ -502,17 +494,14 @@ def run_evaluation(args):
     )
     final_model.eval()
     
-    # 2. Load test dataset
-    logger.info("📊 Loading test dataset...")
+    # 2. Load test dataset    logger.info("Loading test dataset...")
     if not os.path.exists(args.test_parquet_file):
         raise FileNotFoundError(f"Parquet file not found: {args.test_parquet_file}")
     
     test_dataset = ParquetTestDataset(args.test_parquet_file, args.sample_num, args.sample_offset, logger)
     prefix_allowed_tokens_fn = test_dataset.get_prefix_allowed_tokens_fn(tokenizer, args.global_trie_file)
     logger.info(f"Using parquet file: {args.test_parquet_file}")
-    if args.global_trie_file:
-        logger.info(f"✅ Global trie file: {args.global_trie_file}")
-    logger.info("✅ SID constrained generation enabled")
+    if args.global_trie_file:        logger.info(f"Global trie file: {args.global_trie_file}")    logger.info("SID constrained generation enabled")
     
     collator = TestCollator(args, tokenizer)
     test_loader = DataLoader(
@@ -522,22 +511,18 @@ def run_evaluation(args):
         shuffle=False,
         num_workers=0,  # Use 0 for compatibility
         pin_memory=True
-    )
-    
-    logger.info(f"📈 Test data size: {len(test_dataset)}")
+    )    logger.info(f"Test data size: {len(test_dataset)}")
     
     # 3. Start evaluation
     metrics = args.metrics.split(",")
-    all_topk_results = []  # 累积所有样本的topk结果
-    total = 0
-    
-    logger.info("🚀 Starting evaluation...")
+        all_topk_results = []  # Accumulate top-k results for all samples
+    total = 0    logger.info("Starting evaluation...")
     
     import time
     start_time = time.time()
     
     with torch.no_grad():
-        progress_bar = tqdm(test_loader, desc="Testing")
+        progress_                bar = '#' * filled + '-' * (bar_length - filled)
         for step, batch in enumerate(progress_bar):
             inputs_texts = batch["inputs"]
             targets = batch["targets"]
@@ -558,15 +543,13 @@ def run_evaluation(args):
                 # Create progress bar visual
                 progress_pct = current_step / total_steps
                 bar_length = 10
-                filled = int(progress_pct * bar_length)
-                bar = '█' * filled + '░' * (bar_length - filled)
+                filled = int(progress_pct * bar_length)                bar = '#' * filled + '-' * (bar_length - filled)
                 
                 progress_info = f"Testing: {progress_pct*100:3.0f}%|{bar}| {current_step}/{total_steps} [{elapsed_str}<{remaining_str}, {avg_time:.2f}s/it]"
                 logger.info(progress_info)
             
             # === Skip CoT Think stage - generate SID directly ===
-            think_texts = [""] * bs
-            logger.info(f"🚀 Skipping CoT Think stage - generating SID directly for batch {step}...")
+            think_texts = [""] * bs            logger.info(f"Skipping CoT Think stage - generating SID directly for batch {step}...")
 
             # === Generate SID directly (no CoT, no Response: prefix) ===
             # Use the formatted prompt as-is, which ends with </think>\n
@@ -582,8 +565,7 @@ def run_evaluation(args):
             )
             enc = {k: v.to(final_model.device) for k, v in enc.items()}
             
-            # Debug: Check tensor devices in Response stage  
-            logger.info(f"🔍 Response stage device info:")
+            # Debug: Check tensor devices in Response stage            logger.info("Response stage device info:")
             logger.info(f"  Input tensor device: {enc['input_ids'].device}")
             logger.info(f"  Model device: {next(final_model.parameters()).device}")
             
@@ -662,8 +644,7 @@ def run_evaluation(args):
                     
                     logger.info("RESPONSE_CANDIDATES:")
                     for j, (c, sc) in enumerate(zip(cands, cand_scores)):
-                        response = extract_assistant_response(c)
-                        logger.info(f"  Rank {j+1}: score={sc:.4f} → {response}")
+                        response = extract_assistant_response(c)                        logger.info(f"  Rank {j+1}: score={sc:.4f} -> {response}")
                     logger.info(f"TARGET: {targets[i]}")
                     logger.info("-" * 50)
             
@@ -682,10 +663,7 @@ def run_evaluation(args):
             if (step + 1) % 50 == 0:
                 # Calculate metrics on accumulated results so far
                 temp_metrics_results = get_metrics_results(all_topk_results, metrics)
-                logger.info("=" * 50)
-                logger.info(f"📊 PROGRESS REPORT - Step {step+1}/{len(test_loader)}")
-                logger.info(f"💾 Processed samples: {total}")
-                logger.info("📈 Current Metrics:")
+                logger.info("=" * 50)                logger.info(f"PROGRESS REPORT - Step {step+1}/{len(test_loader)}")                logger.info(f"Processed samples: {total}")                logger.info("Current Metrics:")
                 for metric, value in temp_metrics_results.items():
                     logger.info(f"  {metric:>10}: {value:.4f}")
                 logger.info("=" * 50)
@@ -694,14 +672,14 @@ def run_evaluation(args):
     final_metrics_results = get_metrics_results(all_topk_results, metrics)
     
     logger.info("=" * 60)
-    logger.info("🎯 Final Hit Rate Results:")
+    logger.info("Final Hit Rate Results:")
     logger.info("=" * 60)
     for metric, value in final_metrics_results.items():
         logger.info(f"{metric:>10}: {value:.4f}")
     logger.info("=" * 60)
     
     # 5. Test summary
-    logger.info("\n📊 Test Summary:")
+    logger.info("\nTest Summary:")
     logger.info(f"Merged model: {args.merged_model_path}")
     if args.additional_lora_path:
         logger.info(f"Additional LoRA: {args.additional_lora_path}")
@@ -714,7 +692,7 @@ def run_evaluation(args):
     if args.enable_cot:
         logger.info(f"Think max tokens: {args.think_max_tokens}")
     
-    logger.info("\n✅ Evaluation completed successfully!")
+    logger.info("\nEvaluation completed successfully!")
     
     return final_metrics_results
 

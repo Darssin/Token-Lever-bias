@@ -6,7 +6,7 @@ echo "馃殌 Starting 8-GPU SID-only Parallel Evaluation..."
 
 MERGED_MODEL_PATH="/mnt/cfs/chubaofs_ads_train_image/wubintao/models/TLB_demo/Beauty/only_sid_sft1"
 ADDITIONAL_LORA_PATH=""
-TEST_PARQUET="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/training_sid_only_data_test.parquet"
+TEST_PARQUET="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_datasets/training_sid_only_data_test.parquet"
 GLOBAL_TRIE_FILE="./exact_trie_sid_only.pkl"
 mkdir -p logs
 TS=$(date +%Y%m%d_%H%M%S)
@@ -18,7 +18,7 @@ echo "鈴?Started at: $(date)"
 
 TOTAL_SAMPLES=22363
 SAMPLES_PER_GPU=$((TOTAL_SAMPLES / 8))
-BATCH_SIZE=4
+BATCH_SIZE=16
 NUM_BEAMS=10
 MAX_TOKENS=6
 

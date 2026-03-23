@@ -27,21 +27,26 @@ def build_global_trie(test_parquet_file, model_path, output_file):
     df = pd.read_parquet(test_parquet_file)
     print(f"Total samples in test set: {len(df)}")
 
+    required_cols = ['input', 'output']
+    for col in required_cols:
+        if col not in df.columns:
+            raise ValueError(f"Required column '{col}' not found in parquet file. Available: {list(df.columns)}")
+
     print(f"Loading tokenizer from: {model_path}")
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-    print("Extracting all SIDs from test set (description + groundtruth)...")
+    print("Extracting all SIDs from test set (input + output)...")
     valid_sids = set()
 
     for _, row in df.iterrows():
-        description_sids = extract_all_sids_from_text(row['description'])
-        for sid in description_sids:
+        input_sids = extract_all_sids_from_text(row['input'])
+        for sid in input_sids:
             if sid and '<|sid_begin|>' in sid and '<|sid_end|>' in sid:
                 valid_sids.add(sid)
 
-        groundtruth_sid = extract_sid_from_text(row['groundtruth'])
-        if groundtruth_sid and '<|sid_begin|>' in groundtruth_sid and '<|sid_end|>' in groundtruth_sid:
-            valid_sids.add(groundtruth_sid)
+        output_sid = extract_sid_from_text(row['output'])
+        if output_sid and '<|sid_begin|>' in output_sid and '<|sid_end|>' in output_sid:
+            valid_sids.add(output_sid)
     
     print(f"Found {len(valid_sids)} unique valid SIDs in test set")
 
@@ -104,10 +109,10 @@ def build_global_trie(test_parquet_file, model_path, output_file):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Precompute global trie for parallel evaluation")
+    parser = argparse.ArgumentParser(description="Precompute global trie for SID-only parallel evaluation")
     parser.add_argument("--test_parquet_file", type=str, required=True, help="Test parquet file")
     parser.add_argument("--model_path", type=str, required=True, help="Model path for tokenizer")
-    parser.add_argument("--output_file", type=str, default="./global_trie.pkl", help="Output pickle file")
+    parser.add_argument("--output_file", type=str, default="./global_trie_sid_only.pkl", help="Output pickle file")
     
     args = parser.parse_args()
     build_global_trie(args.test_parquet_file, args.model_path, args.output_file)

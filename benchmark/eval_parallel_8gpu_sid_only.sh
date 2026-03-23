@@ -1,37 +1,41 @@
 #!/usr/bin/env bash
 
-echo "Starting 8-GPU Parallel Only-SID Evaluation..."
+# Usage: ./eval_parallel_8gpu_sid_only.sh [EXTRA_ARGS]
+
+echo "馃殌 Starting 8-GPU SID-only Parallel Evaluation..."
 
 MERGED_MODEL_PATH="/mnt/cfs/chubaofs_ads_train_image/wubintao/models/TLB_demo/Beauty/only_sid_sft1"
-TEST_PARQUET="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_datasets/training_sid_only_data_test.parquet"
-GLOBAL_TRIE_FILE="./exact_trie_onlysid.pkl"
+ADDITIONAL_LORA_PATH=""
+TEST_PARQUET="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/training_sid_only_data_test.parquet"
+GLOBAL_TRIE_FILE="./exact_trie_sid_only.pkl"
 mkdir -p logs
 TS=$(date +%Y%m%d_%H%M%S)
-LOG_DIR="logs_onlysid/parallel_eval_${TS}"
+LOG_DIR="logs_sid_only/parallel_eval_${TS}"
 mkdir -p "$LOG_DIR"
 
-echo "Log directory: $LOG_DIR"
-echo "Started at: $(date)"
+echo "馃摑 Log directory: $LOG_DIR"
+echo "鈴?Started at: $(date)"
 
 TOTAL_SAMPLES=22363
 SAMPLES_PER_GPU=$((TOTAL_SAMPLES / 8))
-BATCH_SIZE=16
+BATCH_SIZE=4
 NUM_BEAMS=10
-MAX_TOKENS=5
+MAX_TOKENS=6
 
-echo "Precomputing exact trie tree for only-sid evaluation..."
+echo "馃搵 Precomputing exact trie tree..."
 if [ ! -f "$GLOBAL_TRIE_FILE" ]; then
-    python3 precompute_global_trie_onlysid.py \
+    python3 precompute_global_trie_sid_only.py \
         --test_parquet_file "$TEST_PARQUET" \
         --model_path "$MERGED_MODEL_PATH" \
         --output_file "$GLOBAL_TRIE_FILE"
-    echo "Exact trie precomputed: $GLOBAL_TRIE_FILE"
+    echo "鉁?Exact trie precomputed: $GLOBAL_TRIE_FILE"
 else
-    echo "Exact trie already exists: $GLOBAL_TRIE_FILE"
+    echo "鉁?Exact trie already exists: $GLOBAL_TRIE_FILE"
 fi
 
-echo "8-GPU Parallel Only-SID Configuration:"
+echo "馃搳 8-GPU Parallel Configuration:"
 echo "  Merged model: $MERGED_MODEL_PATH"
+echo "  Additional LoRA: $ADDITIONAL_LORA_PATH"
 echo "  Exact trie: $GLOBAL_TRIE_FILE"
 echo "  Total samples: $TOTAL_SAMPLES"
 echo "  Samples per GPU: $SAMPLES_PER_GPU"
@@ -47,11 +51,12 @@ pids=()
 for gpu_id in {0..7}; do
     offset=$((gpu_id * SAMPLES_PER_GPU))
     log_file="${LOG_DIR}/gpu_${gpu_id}.log"
+    
+    echo "馃攧 Starting GPU $gpu_id: samples $offset-$((offset + SAMPLES_PER_GPU - 1))"
 
-    echo "Starting GPU $gpu_id: samples $offset-$((offset + SAMPLES_PER_GPU - 1))"
-
-    CUDA_VISIBLE_DEVICES=$gpu_id nohup python3 -u test_model_hitrate_onlysid.py \
+    CUDA_VISIBLE_DEVICES=$gpu_id nohup python3 -u test_model_hitrate_sid_only.py \
         --merged_model_path "${MERGED_MODEL_PATH}" \
+        --additional_lora_path "${ADDITIONAL_LORA_PATH}" \
         --test_parquet_file "${TEST_PARQUET}" \
         --global_trie_file "${GLOBAL_TRIE_FILE}" \
         --test_batch_size ${BATCH_SIZE} \
@@ -72,18 +77,29 @@ for gpu_id in {0..7}; do
 done
 
 echo ""
-echo "All 8 processes started:"
+echo "馃攧 All 8 processes started:"
 for i in {0..7}; do
     echo "  GPU $i: PID ${pids[$i]} -> ${LOG_DIR}/gpu_${i}.log"
 done
 
 echo ""
-echo "Waiting for all processes to complete..."
+echo "馃搵 Monitor commands:"
+echo "  # View GPU status"
+echo "  nvidia-smi"
+echo "  # View specific GPU output (recommended)"
+echo "  tail -f ${LOG_DIR}/gpu_0.log"
+echo "  # View all GPU outputs"
+echo "  tail -f ${LOG_DIR}/gpu_*.log"
+echo "  # View process status"
+echo "  ps aux | grep test_model_hitrate_sid_only"
+
+echo ""
+echo "鈴?Waiting for all processes to complete..."
 wait "${pids[@]}"
 
 python3 -c "
-import os
 import re
+import os
 
 log_dir = '${LOG_DIR}'
 metrics = ['hit@1', 'hit@5', 'hit@10', 'ndcg@5', 'ndcg@10']
@@ -92,7 +108,7 @@ total_samples = 0
 
 summary_log = f'{log_dir}/summary_results.log'
 with open(summary_log, 'w', encoding='utf-8') as f:
-    f.write('Only-SID 8-GPU Parallel Evaluation Summary\n')
+    f.write('SID-only 8-GPU Parallel Evaluation Summary\n')
     f.write('=' * 60 + '\n')
     f.write(f'Timestamp: $(date)\n')
     f.write(f'Log directory: {log_dir}\n\n')
@@ -131,6 +147,7 @@ with open(summary_log, 'w', encoding='utf-8') as f:
     f.write('\n')
     if found_gpus > 0:
         avg_metrics = {m: total_metrics[m] / found_gpus for m in metrics}
+
         f.write('FINAL AVERAGED RESULTS:\n')
         f.write('=' * 60 + '\n')
         for metric, value in avg_metrics.items():
@@ -139,6 +156,7 @@ with open(summary_log, 'w', encoding='utf-8') as f:
         f.write(f'Total samples: {total_samples}\n')
         f.write(f'Completed GPUs: {found_gpus}/8\n')
         f.write('Evaluation completed successfully!\n')
+
     else:
         f.write('No valid results found!\n')
 

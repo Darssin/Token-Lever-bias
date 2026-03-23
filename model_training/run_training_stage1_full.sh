@@ -33,6 +33,7 @@ deepspeed "$SCRIPT_DIR/train_align_full.py" \
   --start_optimize_embedding_index "$START_OPTIMIZE_EMBEDDING_INDEX" \
   --tensorboard_dir "${TENSORBOARD_DIR:-$TRAINING_OUTPUT_DIR/tensorboard}" \
   --per_device_train_batch_size "${PER_DEVICE_TRAIN_BATCH_SIZE:-8}" \
+  --gradient_accumulation_steps 1 \
   --num_train_epochs "${NUM_TRAIN_EPOCHS:-15}" \
   --gradient_checkpointing True \
   --bf16 "${BF16:-True}" \
@@ -56,7 +57,7 @@ deepspeed "$SCRIPT_DIR/train_align_full.py" \
   --adam_beta2 0.999 \
   --adam_epsilon 1e-8 \
   --max_grad_norm 1.0 \
-  --dataloader_num_workers "${DATALOADER_NUM_WORKERS:-16}" \
+  --dataloader_num_workers "${DATALOADER_NUM_WORKERS:-4}" \
   --remove_unused_columns False 2>&1 | tee -a "$LOG_FILE"
 
 echo "Stage 1 full fine-tuning completed. Output saved to: $TRAINING_OUTPUT_DIR"

@@ -203,3 +203,15 @@ bash model_training/run_training_stage1_full.sh \
 
 
 
+python pretrain_json_pipeline/generate_sid_only_data.py \
+  --user_sequence data/user_sequence.txt \
+  --item_meta_with_sid data/item_meta.with_sid.json \
+  --output_dir data/output
+
+
+TENSORBOARD_DIR=../outputs/my_tb \
+bash model_training/run_training_sid_only.sh \
+  ../basemodel/Qwen3-1-7B-expand \
+  ../data \
+  ../outputs/sid_only_sft
+

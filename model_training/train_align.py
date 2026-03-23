@@ -71,6 +71,7 @@ def main():
         AutoTokenizer,
         DataCollatorForLanguageModeling,
         EarlyStoppingCallback,
+        HfArgumentParser,
         Trainer,
         TrainerCallback,
         TrainingArguments,
@@ -108,7 +109,12 @@ def main():
         tensorboard_dir.mkdir(parents=True, exist_ok=True)
         print(f"TensorBoard directory: {tensorboard_dir}")
 
-    report_to = list(training_args.report_to) if training_args.report_to else []
+    if training_args.report_to is None:
+        report_to = []
+    elif isinstance(training_args.report_to, str):
+        report_to = [training_args.report_to]
+    else:
+        report_to = list(training_args.report_to)
     if "tensorboard" not in report_to:
         report_to.append("tensorboard")
     training_args.report_to = report_to

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 if [ "$#" -lt 3 ]; then
-  echo "Usage: bash run_training_stage1.sh <expanded_model_dir> <dataset_dir> <training_output_dir>"
-  echo "dataset_dir should contain training_align_data_train.parquet and training_align_data_valid.parquet"
+  echo "Usage: bash run_training_sid_only.sh <expanded_model_dir> <dataset_dir> <training_output_dir>"
+  echo "dataset_dir should contain training_sid_only_data_train.parquet and training_sid_only_data_valid.parquet"
   exit 1
 fi
 
@@ -12,26 +12,28 @@ DATASET_DIR="$2"
 TRAINING_OUTPUT_DIR="$3"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TRAIN_DATA="${DATASET_DIR}/training_align_data_train.parquet"
-VAL_DATA="${DATASET_DIR}/training_align_data_valid.parquet"
-LOG_FILE="${LOG_FILE:-$(pwd)/train.LOG}"
+TRAIN_DATA="${DATASET_DIR}/training_sid_only_data_train.parquet"
+VAL_DATA="${DATASET_DIR}/training_sid_only_data_valid.parquet"
+LOG_FILE="${LOG_FILE:-$(pwd)/train_sid_only.LOG}"
 DS_CONFIG="${DS_CONFIG:-$SCRIPT_DIR/ds_config_zero2.json}"
+TENSORBOARD_DIR="${TENSORBOARD_DIR:-$TRAINING_OUTPUT_DIR/tensorboard}"
 
 mkdir -p "$TRAINING_OUTPUT_DIR"
 mkdir -p "$(dirname "$LOG_FILE")"
-deepspeed "$SCRIPT_DIR/train_align.py" \
-  --model_dir "$EXPANDED_MODEL_DIR" \
+mkdir -p "$TENSORBOARD_DIR"
+
+deepspeed "$SCRIPT_DIR/train_sid_only_sft.py" \
+  --model_name_or_path "$EXPANDED_MODEL_DIR" \
   --train_data_path "$TRAIN_DATA" \
   --val_data_path "$VAL_DATA" \
-  --tensorboard_dir "${TENSORBOARD_DIR:-$TRAINING_OUTPUT_DIR/tensorboard}" \
   --per_device_train_batch_size "${PER_DEVICE_TRAIN_BATCH_SIZE:-8}" \
-  --gradient_accumulation_steps 1 \
+  --gradient_accumulation_steps "${GRADIENT_ACCUMULATION_STEPS:-1}" \
   --num_train_epochs "${NUM_TRAIN_EPOCHS:-15}" \
   --gradient_checkpointing True \
   --bf16 "${BF16:-True}" \
   --deepspeed "$DS_CONFIG" \
   --output_dir "$TRAINING_OUTPUT_DIR" \
-  --logging_dir "${LOGGING_DIR:-$TRAINING_OUTPUT_DIR/logs}" \
+  --logging_dir "$TENSORBOARD_DIR" \
   --report_to tensorboard \
   --logging_steps "${LOGGING_STEPS:-10}" \
   --eval_strategy epoch \
@@ -52,5 +54,6 @@ deepspeed "$SCRIPT_DIR/train_align.py" \
   --dataloader_num_workers "${DATALOADER_NUM_WORKERS:-4}" \
   --remove_unused_columns False 2>&1 | tee -a "$LOG_FILE"
 
-echo "Stage 1 training completed. Output saved to: $TRAINING_OUTPUT_DIR"
+echo "SID-only SFT training completed. Output saved to: $TRAINING_OUTPUT_DIR"
 echo "Training log appended to: $LOG_FILE"
+echo "TensorBoard logs saved to: $TENSORBOARD_DIR"

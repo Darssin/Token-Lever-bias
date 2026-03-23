@@ -111,7 +111,6 @@ class EmbeddingRangeMasker:
             if self.lm_head_weight is not None and self.lm_head_frozen_prefix is not None:
                 self.lm_head_weight[: self.start_index].copy_(self.lm_head_frozen_prefix)
 
-
 def main():
     script_parser = parse_script_args()
     script_args, remaining_args = script_parser.parse_known_args()
@@ -150,7 +149,12 @@ def main():
         tensorboard_dir.mkdir(parents=True, exist_ok=True)
         print(f"TensorBoard directory: {tensorboard_dir}")
 
-    report_to = list(training_args.report_to) if training_args.report_to else []
+    if training_args.report_to is None:
+        report_to = []
+    elif isinstance(training_args.report_to, str):
+        report_to = [training_args.report_to]
+    else:
+        report_to = list(training_args.report_to)
     if "tensorboard" not in report_to:
         report_to.append("tensorboard")
     training_args.report_to = report_to

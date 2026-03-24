@@ -3,17 +3,16 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}/.."
 
-MODEL_DIR="../basemodel/merged_beauty_model_1-1"
-TRAIN_DATA="../data/training_prediction_sid_data_train.parquet"
-VAL_DATA="../data/training_prediction_sid_data_val.parquet"
+MODEL_DIR="/mnt/cfs/chubaofs_ads_train_image/wubintao/models/TLB_demo/Beauty/stage1/checkpoint-2796"
+TRAIN_DATA="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_datasets/training_prediction_sid_data_train.parquet"
+VAL_DATA="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_datasets/training_prediction_sid_data_valid.parquet"
 
 USE_LORA=false
 
 DEEPSPEED_CMD=(
     deepspeed
-    --hostfile=./scripts/hostfile
     --num_gpus 8
-    ./scripts/train_beauty_sid_rec.py
+    ./model_training/train_beauty_sid_rec.py
     --model_name_or_path "${MODEL_DIR}"
     --train_data_path "${TRAIN_DATA}"
     --val_data_path "${VAL_DATA}"
@@ -32,12 +31,12 @@ else
 fi
 
 DEEPSPEED_CMD+=(
-    --per_device_train_batch_size 2
+    --per_device_train_batch_size 4
     --num_train_epochs 6
     --gradient_checkpointing True
     --bf16 True
-    --deepspeed ./scripts/ds_config_zero2.json
-    --output_dir ./results/beauty_sid_rec
+    --deepspeed ./model_training/ds_config_zero2.json
+    --output_dir /mnt/cfs/chubaofs_ads_train_image/wubintao/models/TLB_demo/Beauty/stage2sft
     --logging_dir ./logs/beauty_sid_rec
     --logging_steps 10
     --eval_strategy epoch
@@ -59,4 +58,6 @@ DEEPSPEED_CMD+=(
     --remove_unused_columns False
 )
 
-nohup "${DEEPSPEED_CMD[@]}" >> beauty_sid_rec.log 2>&1 &
+export WANDB_MODE=offline
+
+nohup env WANDB_MODE=offline "${DEEPSPEED_CMD[@]}" 2>&1 | tee -a beauty_sid_rec.log &

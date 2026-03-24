@@ -44,7 +44,7 @@ deepspeed "$SCRIPT_DIR/train_sid_only_sft.py" \
   --greater_is_better False \
   --load_best_model_at_end True \
   --optim adamw_torch \
-  --learning_rate "${LEARNING_RATE:-1e-4}" \
+  --learning_rate "${LEARNING_RATE:-2e-5}" \
   --warmup_ratio "${WARMUP_RATIO:-0.0}" \
   --weight_decay "${WEIGHT_DECAY:-0.0}" \
   --adam_beta1 0.9 \

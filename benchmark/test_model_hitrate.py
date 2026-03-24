@@ -63,8 +63,6 @@ def parse_args():
                         help="max new tokens for the Think stage")
     parser.add_argument("--print_generations", action="store_true", default=False,
                         help="print prompts, think, and response candidates")
-    parser.add_argument("--two_round_beam_search", action="store_true", default=False,
-                        help="run two-round beam search and merge candidates from both rounds")
 
     parser.add_argument("--log_file", type=str,
                         default="./logs/two_stage_test.log",
@@ -134,7 +132,8 @@ def load_merged_model(model_path, additional_lora_path=None, logger=None):
     
     # Force GPU usage - direct approach without device_map
     if torch.cuda.is_available():
-        device = f"cuda:{torch.cuda.current_device()}"        logger.info(f"Forcing model to GPU: {device}")
+        device = f"cuda:{torch.cuda.current_device()}"
+        logger.info(f"🔧 Forcing model to GPU: {device}")
         
         # Direct load and move approach (most reliable)
         logger.info("Loading model and moving to GPU...")
@@ -146,12 +145,15 @@ def load_merged_model(model_path, additional_lora_path=None, logger=None):
         
         # Force move to GPU
         logger.info(f"Moving model to {device}...")
-        model = model.to(device)        logger.info("Model moved to GPU")
+        model = model.to(device)
+        logger.info(f"✅ Model moved to GPU")
         
         # Verify GPU placement
         first_param_device = next(model.parameters()).device
-        if 'cuda' in str(first_param_device):            logger.info(f"Confirmed: Model is on {first_param_device}")
-        else:            logger.error(f"Failed: Model is still on {first_param_device}")
+        if 'cuda' in str(first_param_device):
+            logger.info(f"✅ Confirmed: Model is on {first_param_device}")
+        else:
+            logger.error(f"❌ Failed: Model is still on {first_param_device}")
             raise RuntimeError("Failed to move model to GPU")
     else:
         model = AutoModelForCausalLM.from_pretrained(
@@ -161,7 +163,8 @@ def load_merged_model(model_path, additional_lora_path=None, logger=None):
     
     logger.info(f"Merged model loaded successfully, tokenizer vocab size: {tokenizer.vocab_size}")
     
-    # Debug: Check model device placement    logger.info("Model device info:")
+    # Debug: Check model device placement
+    logger.info(f"🔍 Model device info:")
     logger.info(f"  CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
         logger.info(f"  Current CUDA device: {torch.cuda.current_device()}")
@@ -175,8 +178,10 @@ def load_merged_model(model_path, additional_lora_path=None, logger=None):
         first_param = next(model.parameters())
         actual_device = first_param.device
         logger.info(f"  Model parameters actual device: {actual_device}")
-        if 'cpu' in str(actual_device):            logger.error("MODEL IS STILL ON CPU! Need to fix this!")
-        else:            logger.info(f"Model is correctly on GPU: {actual_device}")
+        if 'cpu' in str(actual_device):
+            logger.error("❌ MODEL IS STILL ON CPU! Need to fix this!")
+        else:
+            logger.info(f"✅ Model is correctly on GPU: {actual_device}")
     else:
         first_param = next(model.parameters())
         logger.info(f"  Model parameters device: {first_param.device}")
@@ -208,6 +213,7 @@ class ParquetTestDataset(Dataset):
         # Load parquet file
         self.df = pd.read_parquet(parquet_file)
         self.logger.info(f"Loaded {len(self.df)} samples from parquet")
+        
         # Apply offset and sample data for multi-GPU processing
         if sample_offset > 0:
             self.df = self.df.iloc[sample_offset:].reset_index(drop=True)
@@ -217,8 +223,8 @@ class ParquetTestDataset(Dataset):
             self.df = self.df.iloc[:sample_num].reset_index(drop=True)
             self.logger.info(f"Limited to {sample_num} samples for this GPU")
         
-        # Expected columns: ['description', 'groundtruth', 'user_id']
-        required_cols = ['description', 'groundtruth']
+        # Expected columns: ['input', 'output', 'user_id']
+        required_cols = ['input', 'output']
         for col in required_cols:
             if col not in self.df.columns:
                 raise ValueError(f"Required column '{col}' not found in parquet file. Available: {list(self.df.columns)}")
@@ -229,8 +235,8 @@ class ParquetTestDataset(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         return {
-            'input_ids': row['description'],
-            'labels': row['groundtruth'],
+            'input_ids': row['input'],
+            'labels': row['output'],
             'user_id': row.get('user_id', f'user_{idx}')
         }
     
@@ -271,8 +277,7 @@ class ParquetTestDataset(Dataset):
         
         # Get "</think>" separator - looking for the end of think block
         sep = tokenizer("</think>", add_special_tokens=False)["input_ids"]
-        newline_tokens = tokenizer.encode('\n', add_special_tokens=False)
-
+        
         def find_last_sublist(lst, sub):
             """Find the last occurrence of sublist in list"""
             if not sub:
@@ -282,19 +287,11 @@ class ParquetTestDataset(Dataset):
                 if lst[start:start + m] == sub:
                     return start
             return None
-
-        def get_sid_segment(tokens_after_sep):
-            if not newline_tokens:
-                return tokens_after_sep
-
-            last_newline_pos = find_last_sublist(tokens_after_sep, newline_tokens)
-            if last_newline_pos is None:
-                return None
-            return tokens_after_sep[last_newline_pos + len(newline_tokens):]
-
+        
         def prefix_allowed_tokens_fn(batch_id, sentence):
-            """Return allowed tokens for one or multiple newline-separated SID generations."""
+            """Return allowed tokens based on current generation position using exact or component trie"""
             sentence = sentence.tolist()
+            
             # Find "</think>" position
             pos = find_last_sublist(sentence, sep)
             if pos is None:
@@ -303,36 +300,42 @@ class ParquetTestDataset(Dataset):
             
             # Calculate position after "</think>"
             pos_after_sep = pos + len(sep)
-            tokens_after_sep = sentence[pos_after_sep:]
-            eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
-
-            if not newline_tokens:
-                if len(tokens_after_sep) == 0:
-                    if 0 in allowed_tokens:
-                        return list(allowed_tokens[0].keys())
-                    return [eos_id]
-
-                sid_segment = tokens_after_sep
+            generated_after_sep = sentence[pos_after_sep:]
+            
+            # Determine current SID token position
+            current_pos = len(generated_after_sep)
+            
+            # Handle newline after </think> then SID pattern
+            if current_pos == 0:
+                # First token after </think> should be newline
+                newline_tokens = tokenizer.encode('\n', add_special_tokens=False)
+                return newline_tokens
             else:
-                sid_segment = get_sid_segment(tokens_after_sep)
-                if sid_segment is None:
-                    consumed = len(tokens_after_sep)
-                    if consumed < len(newline_tokens) and tokens_after_sep == newline_tokens[:consumed]:
-                        return [newline_tokens[consumed]]
-                    return newline_tokens
-
-                if len(sid_segment) == 0:
+                # After newline, apply SID constraints
+                sid_pos = current_pos - 1
+                
+                # Use exact trie: check what tokens are allowed at this position
+                if sid_pos == 0:
+                    # First SID token position - should be <|sid_begin|>
                     if 0 in allowed_tokens:
-                        return list(allowed_tokens[0].keys())
+                        allowed = list(allowed_tokens[0].keys())
+                        return allowed
+                    else:
+                        eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
+                        return [eos_id]
+                else:
+                    # Look up what's allowed based on previous token
+                    if len(generated_after_sep) > sid_pos:
+                        prev_token = generated_after_sep[sid_pos]  # Current token at this position
+                        prev_pos = sid_pos - 1
+                        
+                        if prev_pos in allowed_tokens and prev_token in allowed_tokens[prev_pos]:
+                            allowed = allowed_tokens[prev_pos][prev_token]
+                            return allowed
+                    
+                    # Fallback to EOS if no valid continuation
+                    eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
                     return [eos_id]
-
-            sid_pos = len(sid_segment) - 1
-            prev_token = sid_segment[-1]
-
-            if sid_pos in allowed_tokens and prev_token in allowed_tokens[sid_pos]:
-                return allowed_tokens[sid_pos][prev_token]
-
-            return [eos_id]
         
         return prefix_allowed_tokens_fn
 
@@ -481,7 +484,8 @@ def extract_assistant_response(generated_text):
 def run_evaluation(args):
     """Main evaluation function"""
     set_seed(args.seed)
-    logger = setup_logging(args.log_file)    logger.info(f"Starting Two-stage Model Hit Rate Evaluation [GPU {args.gpu_id}]")
+    logger = setup_logging(args.log_file)
+    logger.info(f"🚀 Starting Two-stage Model Hit Rate Evaluation [GPU {args.gpu_id}]")
     logger.info(f"Args: {vars(args)}")
     
     # 1. Load merged model
@@ -494,14 +498,17 @@ def run_evaluation(args):
     )
     final_model.eval()
     
-    # 2. Load test dataset    logger.info("Loading test dataset...")
+    # 2. Load test dataset
+    logger.info("📊 Loading test dataset...")
     if not os.path.exists(args.test_parquet_file):
         raise FileNotFoundError(f"Parquet file not found: {args.test_parquet_file}")
     
     test_dataset = ParquetTestDataset(args.test_parquet_file, args.sample_num, args.sample_offset, logger)
     prefix_allowed_tokens_fn = test_dataset.get_prefix_allowed_tokens_fn(tokenizer, args.global_trie_file)
     logger.info(f"Using parquet file: {args.test_parquet_file}")
-    if args.global_trie_file:        logger.info(f"Global trie file: {args.global_trie_file}")    logger.info("SID constrained generation enabled")
+    if args.global_trie_file:
+        logger.info(f"✅ Global trie file: {args.global_trie_file}")
+    logger.info("✅ SID constrained generation enabled")
     
     collator = TestCollator(args, tokenizer)
     test_loader = DataLoader(
@@ -511,18 +518,22 @@ def run_evaluation(args):
         shuffle=False,
         num_workers=0,  # Use 0 for compatibility
         pin_memory=True
-    )    logger.info(f"Test data size: {len(test_dataset)}")
+    )
+    
+    logger.info(f"📈 Test data size: {len(test_dataset)}")
     
     # 3. Start evaluation
     metrics = args.metrics.split(",")
-        all_topk_results = []  # Accumulate top-k results for all samples
-    total = 0    logger.info("Starting evaluation...")
+    all_topk_results = []  # 累积所有样本的topk结果
+    total = 0
+    
+    logger.info("🚀 Starting evaluation...")
     
     import time
     start_time = time.time()
     
     with torch.no_grad():
-        progress_                bar = '#' * filled + '-' * (bar_length - filled)
+        progress_bar = tqdm(test_loader, desc="Testing")
         for step, batch in enumerate(progress_bar):
             inputs_texts = batch["inputs"]
             targets = batch["targets"]
@@ -543,13 +554,15 @@ def run_evaluation(args):
                 # Create progress bar visual
                 progress_pct = current_step / total_steps
                 bar_length = 10
-                filled = int(progress_pct * bar_length)                bar = '#' * filled + '-' * (bar_length - filled)
+                filled = int(progress_pct * bar_length)
+                bar = '█' * filled + '░' * (bar_length - filled)
                 
                 progress_info = f"Testing: {progress_pct*100:3.0f}%|{bar}| {current_step}/{total_steps} [{elapsed_str}<{remaining_str}, {avg_time:.2f}s/it]"
                 logger.info(progress_info)
             
             # === Skip CoT Think stage - generate SID directly ===
-            think_texts = [""] * bs            logger.info(f"Skipping CoT Think stage - generating SID directly for batch {step}...")
+            think_texts = [""] * bs
+            logger.info(f"🚀 Skipping CoT Think stage - generating SID directly for batch {step}...")
 
             # === Generate SID directly (no CoT, no Response: prefix) ===
             # Use the formatted prompt as-is, which ends with </think>\n
@@ -565,7 +578,8 @@ def run_evaluation(args):
             )
             enc = {k: v.to(final_model.device) for k, v in enc.items()}
             
-            # Debug: Check tensor devices in Response stage            logger.info("Response stage device info:")
+            # Debug: Check tensor devices in Response stage  
+            logger.info(f"🔍 Response stage device info:")
             logger.info(f"  Input tensor device: {enc['input_ids'].device}")
             logger.info(f"  Model device: {next(final_model.parameters()).device}")
             
@@ -589,14 +603,8 @@ def run_evaluation(args):
                     # Add SID constrained generation
                     if prefix_allowed_tokens_fn is not None:
                         generate_kwargs["prefix_allowed_tokens_fn"] = prefix_allowed_tokens_fn
-
-                    if args.two_round_beam_search:
-                        output = final_model.generate_two_pass_beam_search(
-                            **generate_kwargs,
-                            second_pass_separator_token_ids=tokenizer.encode('\n', add_special_tokens=False),
-                        )
-                    else:
-                        output = final_model.generate(**generate_kwargs)
+                    
+                    output = final_model.generate(**generate_kwargs)
                     break
                 except RuntimeError as e:
                     err = str(e).lower()
@@ -644,7 +652,8 @@ def run_evaluation(args):
                     
                     logger.info("RESPONSE_CANDIDATES:")
                     for j, (c, sc) in enumerate(zip(cands, cand_scores)):
-                        response = extract_assistant_response(c)                        logger.info(f"  Rank {j+1}: score={sc:.4f} -> {response}")
+                        response = extract_assistant_response(c)
+                        logger.info(f"  Rank {j+1}: score={sc:.4f} → {response}")
                     logger.info(f"TARGET: {targets[i]}")
                     logger.info("-" * 50)
             
@@ -663,7 +672,10 @@ def run_evaluation(args):
             if (step + 1) % 50 == 0:
                 # Calculate metrics on accumulated results so far
                 temp_metrics_results = get_metrics_results(all_topk_results, metrics)
-                logger.info("=" * 50)                logger.info(f"PROGRESS REPORT - Step {step+1}/{len(test_loader)}")                logger.info(f"Processed samples: {total}")                logger.info("Current Metrics:")
+                logger.info("=" * 50)
+                logger.info(f"📊 PROGRESS REPORT - Step {step+1}/{len(test_loader)}")
+                logger.info(f"💾 Processed samples: {total}")
+                logger.info("📈 Current Metrics:")
                 for metric, value in temp_metrics_results.items():
                     logger.info(f"  {metric:>10}: {value:.4f}")
                 logger.info("=" * 50)
@@ -672,14 +684,14 @@ def run_evaluation(args):
     final_metrics_results = get_metrics_results(all_topk_results, metrics)
     
     logger.info("=" * 60)
-    logger.info("Final Hit Rate Results:")
+    logger.info("🎯 Final Hit Rate Results:")
     logger.info("=" * 60)
     for metric, value in final_metrics_results.items():
         logger.info(f"{metric:>10}: {value:.4f}")
     logger.info("=" * 60)
     
     # 5. Test summary
-    logger.info("\nTest Summary:")
+    logger.info("\n📊 Test Summary:")
     logger.info(f"Merged model: {args.merged_model_path}")
     if args.additional_lora_path:
         logger.info(f"Additional LoRA: {args.additional_lora_path}")
@@ -687,12 +699,11 @@ def run_evaluation(args):
     logger.info(f"Total samples: {total}")
     logger.info(f"Batch size: {args.test_batch_size}")
     logger.info(f"Beam size: {args.num_beams}")
-    logger.info(f"Two-round beam search: {args.two_round_beam_search}")
     logger.info(f"CoT enabled: {args.enable_cot}")
     if args.enable_cot:
         logger.info(f"Think max tokens: {args.think_max_tokens}")
     
-    logger.info("\nEvaluation completed successfully!")
+    logger.info("\n✅ Evaluation completed successfully!")
     
     return final_metrics_results
 

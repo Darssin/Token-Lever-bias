@@ -2,7 +2,7 @@
 
 # --- 配置区域 ---
 LOCAL_DIR="$(pwd)/" 
-REMOTE_DIR="/home/wubintao.6/TLB_demo/"
+REMOTE_DIR="/home/wubintao.6/TLB_multiInter/"
 SSH_PROXY='wsCli -a dt02.easyalgo.jd.com -t d3ViaW50YW8uNiZ3dWJpbnRhby11c2VyLXByb2ZpbGUmMDYyNThiMGVkNjEyNDAwZGE3MjRiNTBiYTRkMjgzOTA='
 
 # --- 执行同步的函数 ---

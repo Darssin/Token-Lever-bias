@@ -90,6 +90,51 @@ def split_train_val(dataframe: pd.DataFrame, ratio: float, seed: int):
     return train_dataframe, val_dataframe
 
 
+def shorten_text(text: Any, max_length: int = 240) -> str:
+    text = str(text or "").replace("\n", "\\n")
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3] + "..."
+
+
+def print_dataframe_preview(name: str, dataframe: pd.DataFrame, limit: int = 3):
+    print(f"\n===== {name} Preview ({min(len(dataframe), limit)}/{len(dataframe)}) =====")
+    if len(dataframe) == 0:
+        print("No rows available.")
+        return
+
+    preview_rows = dataframe.head(limit).to_dict("records")
+    for index, row in enumerate(preview_rows, start=1):
+        print(f"[{name} #{index}]")
+        if "user_id" in row:
+            print(f"user_id: {row.get('user_id', '')}")
+        if "input" in row:
+            print(f"input: {shorten_text(row.get('input', ''))}")
+        if "target_sid" in row:
+            print(f"target_sid: {row.get('target_sid', '')}")
+        if "draft_sid" in row:
+            print(f"draft_sid: {row.get('draft_sid', '')}")
+        if "reflection_sequence" in row:
+            print(f"reflection_sequence: {row.get('reflection_sequence', '')}")
+        if "loc_label_token" in row:
+            print(f"loc_label_token: {row.get('loc_label_token', '')}")
+        if "leaf_label_token" in row:
+            print(
+                "leaf_label_token: "
+                f"{row.get('leaf_label_token', '')} "
+                f"(score={row.get('leaf_severity_score', '')}, bucket={row.get('leaf_severity_bucket', '')})"
+            )
+        if "brand_label_token" in row:
+            print(
+                "brand_label_token: "
+                f"{row.get('brand_label_token', '')} "
+                f"(score={row.get('brand_severity_score', '')}, bucket={row.get('brand_severity_bucket', '')})"
+            )
+        if "text" in row:
+            print(f"text: {shorten_text(row.get('text', ''), max_length=360)}")
+        print("-" * 80)
+
+
 def tokenize_function(examples, tokenizer, text_column: str, max_length: int):
     return tokenizer(
         examples[text_column],
@@ -280,6 +325,8 @@ def main():
         if "reflection_combo" in train_dataframe.columns:
             print("Top reflection combos in train:")
             print(train_dataframe["reflection_combo"].value_counts().head(10).to_dict())
+        print_dataframe_preview("Train", train_dataframe)
+        print_dataframe_preview("Val", val_dataframe)
 
     model = AutoModelForCausalLM.from_pretrained(str(model_path))
     tokenizer = AutoTokenizer.from_pretrained(str(model_path))

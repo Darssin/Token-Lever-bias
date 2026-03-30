@@ -61,6 +61,56 @@ def chunked(items: Sequence[Any], chunk_size: int):
         yield items[start : start + chunk_size]
 
 
+def shorten_text(text: Any, max_length: int = 240) -> str:
+    text = str(text or "").replace("\n", "\\n")
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3] + "..."
+
+
+def print_preview_rows(title: str, rows: Sequence[Dict[str, Any]], limit: int = 3):
+    print(f"\n===== {title} Preview ({min(len(rows), limit)}/{len(rows)}) =====")
+    if not rows:
+        print("No rows available.")
+        return
+
+    for index, row in enumerate(rows[:limit], start=1):
+        print(f"[{title} #{index}]")
+        if "user_id" in row:
+            print(f"user_id: {row.get('user_id', '')}")
+        if "input" in row:
+            print(f"input: {shorten_text(row.get('input', ''))}")
+        if "target_sid" in row:
+            print(f"target_sid: {row.get('target_sid', '')}")
+        if "draft_sid" in row:
+            print(f"draft_sid: {row.get('draft_sid', '')}")
+        if "reflection_sequence" in row:
+            print(f"reflection_sequence: {row.get('reflection_sequence', '')}")
+        if "loc_label_token" in row:
+            print(f"loc_label_token: {row.get('loc_label_token', '')}")
+        if "leaf_label_token" in row:
+            print(
+                "leaf_label_token: "
+                f"{row.get('leaf_label_token', '')} "
+                f"(score={row.get('leaf_severity_score', '')}, bucket={row.get('leaf_severity_bucket', '')})"
+            )
+        if "brand_label_token" in row:
+            print(
+                "brand_label_token: "
+                f"{row.get('brand_label_token', '')} "
+                f"(score={row.get('brand_severity_score', '')}, bucket={row.get('brand_severity_bucket', '')})"
+            )
+        if "prompt" in row:
+            print(f"prompt: {shorten_text(row.get('prompt', ''))}")
+        if "ground_truth" in row:
+            print(f"ground_truth: {row.get('ground_truth', '')}")
+        if "extra_info" in row:
+            print(f"extra_info: {shorten_text(row.get('extra_info', ''))}")
+        if "text" in row:
+            print(f"text: {shorten_text(row.get('text', ''), max_length=360)}")
+        print("-" * 80)
+
+
 def add_grc_tokens_if_missing(tokenizer, model, num_levels: int):
     tokens = get_grc_special_tokens(num_levels=num_levels)
     added = tokenizer.add_special_tokens(
@@ -372,6 +422,9 @@ def main():
         tokenizer=tokenizer,
         args=args,
     )
+
+    print_preview_rows("SFT", sft_rows)
+    print_preview_rows("VERL", verl_rows)
 
     sft_df = pd.DataFrame(sft_rows)
     args.sft_output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -90,11 +90,10 @@ def split_train_val(dataframe: pd.DataFrame, ratio: float, seed: int):
     return train_dataframe, val_dataframe
 
 
-def shorten_text(text: Any, max_length: int = 240) -> str:
-    text = str(text or "").replace("\n", "\\n")
-    if len(text) <= max_length:
-        return text
-    return text[: max_length - 3] + "..."
+def format_preview_value(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)
 
 
 def print_dataframe_preview(name: str, dataframe: pd.DataFrame, limit: int = 3):
@@ -109,7 +108,8 @@ def print_dataframe_preview(name: str, dataframe: pd.DataFrame, limit: int = 3):
         if "user_id" in row:
             print(f"user_id: {row.get('user_id', '')}")
         if "input" in row:
-            print(f"input: {shorten_text(row.get('input', ''))}")
+            print("input:")
+            print(format_preview_value(row.get("input", "")))
         if "target_sid" in row:
             print(f"target_sid: {row.get('target_sid', '')}")
         if "draft_sid" in row:
@@ -131,7 +131,8 @@ def print_dataframe_preview(name: str, dataframe: pd.DataFrame, limit: int = 3):
                 f"(score={row.get('brand_severity_score', '')}, bucket={row.get('brand_severity_bucket', '')})"
             )
         if "text" in row:
-            print(f"text: {shorten_text(row.get('text', ''), max_length=360)}")
+            print("text:")
+            print(format_preview_value(row.get("text", "")))
         print("-" * 80)
 
 

@@ -2,11 +2,13 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 import torch
+import torch.distributed as dist
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from grc_pipeline_utils import (
@@ -46,6 +48,33 @@ def parse_args():
     return parser.parse_args()
 
 
+def get_distributed_context() -> Tuple[int, int, int]:
+    rank = int(os.environ.get("RANK", "0"))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    return rank, world_size, local_rank
+
+
+def setup_distributed() -> Tuple[int, int, int]:
+    rank, world_size, local_rank = get_distributed_context()
+    if world_size > 1 and not dist.is_initialized():
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        dist.init_process_group(backend=backend)
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+    return rank, world_size, local_rank
+
+
+def cleanup_distributed():
+    if dist.is_initialized():
+        dist.barrier()
+        dist.destroy_process_group()
+
+
+def is_main_process(rank: int) -> bool:
+    return rank == 0
+
+
 def resolve_dtype(dtype_name: str):
     if dtype_name == "bf16":
         return torch.bfloat16
@@ -53,6 +82,10 @@ def resolve_dtype(dtype_name: str):
         return torch.float16
     if dtype_name == "fp32":
         return torch.float32
+    if torch.cuda.is_available():
+        if torch.cuda.is_bf16_supported():
+            return torch.bfloat16
+        return torch.float16
     return None
 
 
@@ -61,11 +94,10 @@ def chunked(items: Sequence[Any], chunk_size: int):
         yield items[start : start + chunk_size]
 
 
-def shorten_text(text: Any, max_length: int = 240) -> str:
-    text = str(text or "").replace("\n", "\\n")
-    if len(text) <= max_length:
-        return text
-    return text[: max_length - 3] + "..."
+def format_preview_value(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)
 
 
 def print_preview_rows(title: str, rows: Sequence[Dict[str, Any]], limit: int = 3):
@@ -79,7 +111,8 @@ def print_preview_rows(title: str, rows: Sequence[Dict[str, Any]], limit: int = 
         if "user_id" in row:
             print(f"user_id: {row.get('user_id', '')}")
         if "input" in row:
-            print(f"input: {shorten_text(row.get('input', ''))}")
+            print("input:")
+            print(format_preview_value(row.get("input", "")))
         if "target_sid" in row:
             print(f"target_sid: {row.get('target_sid', '')}")
         if "draft_sid" in row:
@@ -101,14 +134,66 @@ def print_preview_rows(title: str, rows: Sequence[Dict[str, Any]], limit: int = 
                 f"(score={row.get('brand_severity_score', '')}, bucket={row.get('brand_severity_bucket', '')})"
             )
         if "prompt" in row:
-            print(f"prompt: {shorten_text(row.get('prompt', ''))}")
+            print("prompt:")
+            print(format_preview_value(row.get("prompt", "")))
         if "ground_truth" in row:
             print(f"ground_truth: {row.get('ground_truth', '')}")
         if "extra_info" in row:
-            print(f"extra_info: {shorten_text(row.get('extra_info', ''))}")
+            print("extra_info:")
+            print(format_preview_value(row.get("extra_info", "")))
         if "text" in row:
-            print(f"text: {shorten_text(row.get('text', ''), max_length=360)}")
+            print("text:")
+            print(format_preview_value(row.get("text", "")))
         print("-" * 80)
+
+
+def shard_dataframe(dataframe: pd.DataFrame, rank: int, world_size: int) -> pd.DataFrame:
+    if world_size <= 1:
+        return dataframe.reset_index(drop=True)
+    return dataframe.iloc[rank::world_size].reset_index(drop=True)
+
+
+def gather_object_list(local_rows: List[Dict[str, Any]], world_size: int) -> List[Dict[str, Any]]:
+    if world_size <= 1:
+        return local_rows
+    gathered: List[Optional[List[Dict[str, Any]]]] = [None for _ in range(world_size)]
+    dist.all_gather_object(gathered, local_rows)
+    merged: List[Dict[str, Any]] = []
+    for part in gathered:
+        if part:
+            merged.extend(part)
+    return merged
+
+
+def gather_summary_dict(local_summary: Dict[str, Any], world_size: int) -> Dict[str, Any]:
+    if world_size <= 1:
+        return local_summary
+    gathered: List[Optional[Dict[str, Any]]] = [None for _ in range(world_size)]
+    dist.all_gather_object(gathered, local_summary)
+    merged = {
+        "num_raw_samples": 0,
+        "num_sft_rows": 0,
+        "num_verl_rows": 0,
+        "num_generated_candidates": 0,
+        "skipped_target_missing_in_metadata": 0,
+        "skipped_target_invalid_sid": 0,
+    }
+    for part in gathered:
+        if not part:
+            continue
+        for key in merged:
+            merged[key] += int(part.get(key, 0))
+    return merged
+
+
+def sort_and_strip_rows(rows: List[Dict[str, Any]], extra_sort_keys: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    sort_keys = ["source_row_index"]
+    if extra_sort_keys:
+        sort_keys.extend(extra_sort_keys)
+    rows = sorted(rows, key=lambda row: tuple(row.get(key, 0) for key in sort_keys))
+    for row in rows:
+        row.pop("source_row_index", None)
+    return rows
 
 
 def add_grc_tokens_if_missing(tokenizer, model, num_levels: int):
@@ -196,6 +281,7 @@ def build_sft_rows(
     model,
     tokenizer,
     args,
+    rank: int,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     records = interactions.to_dict("records")
     sft_rows: List[Dict[str, Any]] = []
@@ -212,7 +298,8 @@ def build_sft_rows(
         iterable = tqdm(
             iterable,
             total=(len(records) + args.batch_size - 1) // args.batch_size,
-            desc="Building GRC datasets",
+            desc=f"Building GRC datasets (rank {rank})",
+            disable=not is_main_process(rank),
         )
     except Exception:
         pass
@@ -243,6 +330,7 @@ def build_sft_rows(
 
             verl_rows.append(
                 {
+                    "source_row_index": int(row["__row_idx__"]),
                     "prompt": build_generation_prompt(row["input"]),
                     "ground_truth": target_sid,
                     "data_source": args.interaction_data_path.stem,
@@ -258,7 +346,7 @@ def build_sft_rows(
                 }
             )
 
-            for rank, (draft_sid, draft_score) in enumerate(candidate_group, start=1):
+            for draft_rank, (draft_sid, draft_score) in enumerate(candidate_group, start=1):
                 total_candidates += 1
                 draft_meta = sid_lookup.get(draft_sid) if draft_sid else None
                 localization = build_localization_reflection(
@@ -286,6 +374,7 @@ def build_sft_rows(
 
                 sft_rows.append(
                     {
+                        "source_row_index": int(row["__row_idx__"]),
                         "user_id": str(row.get("user_id", "")),
                         "input": row["input"],
                         "target_sid": target_sid,
@@ -293,7 +382,7 @@ def build_sft_rows(
                         "target_leaf_category": target_meta["leaf_category"],
                         "target_brand": target_meta["brand"],
                         "draft_sid": draft_sid,
-                        "draft_rank": rank,
+                        "draft_rank": draft_rank,
                         "draft_score": draft_score,
                         "draft_item_id": draft_meta["item_id"] if draft_meta else None,
                         "draft_leaf_category": draft_meta["leaf_category"] if draft_meta else "",
@@ -392,66 +481,93 @@ def save_summary(sft_df: pd.DataFrame, summary: Dict[str, Any], output_path: Pat
 
 def main():
     args = parse_args()
-    interactions = pd.read_parquet(args.interaction_data_path)
-    required_columns = {"input", "output"}
-    missing = required_columns - set(interactions.columns)
-    if missing:
-        raise ValueError(
-            f"Interaction parquet is missing columns: {sorted(missing)}. "
-            f"Available columns: {list(interactions.columns)}"
+    rank, world_size, local_rank = setup_distributed()
+    device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
+
+    try:
+        interactions = pd.read_parquet(args.interaction_data_path)
+        required_columns = {"input", "output"}
+        missing = required_columns - set(interactions.columns)
+        if missing:
+            raise ValueError(
+                f"Interaction parquet is missing columns: {sorted(missing)}. "
+                f"Available columns: {list(interactions.columns)}"
+            )
+        if args.max_samples is not None:
+            interactions = interactions.iloc[: args.max_samples].reset_index(drop=True)
+        interactions = interactions.reset_index(drop=True)
+        interactions["__row_idx__"] = interactions.index
+        total_interactions = len(interactions)
+        interactions = shard_dataframe(interactions, rank=rank, world_size=world_size)
+
+        sid_lookup, _ = build_metadata_lookup(args.metadata_path)
+        if is_main_process(rank):
+            print(f"Loaded {len(sid_lookup)} SID metadata records from {args.metadata_path}")
+            print(f"Running dataset build with world_size={world_size} on device={device}")
+            print(f"Total interaction rows: {total_interactions}")
+        print(f"[rank {rank}] Local shard rows: {len(interactions)}")
+
+        model = AutoModelForCausalLM.from_pretrained(
+            str(args.base_model_path.resolve()),
+            torch_dtype=resolve_dtype(args.dtype),
         )
-    if args.max_samples is not None:
-        interactions = interactions.iloc[: args.max_samples].reset_index(drop=True)
+        model.to(device)
+        tokenizer = AutoTokenizer.from_pretrained(str(args.base_model_path.resolve()))
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        add_grc_tokens_if_missing(tokenizer, model, num_levels=args.num_levels)
 
-    sid_lookup, _ = build_metadata_lookup(args.metadata_path)
-    print(f"Loaded {len(sid_lookup)} SID metadata records from {args.metadata_path}")
+        local_sft_rows, local_verl_rows, local_summary = build_sft_rows(
+            interactions=interactions,
+            sid_lookup=sid_lookup,
+            model=model,
+            tokenizer=tokenizer,
+            args=args,
+            rank=rank,
+        )
 
-    model = AutoModelForCausalLM.from_pretrained(
-        str(args.base_model_path.resolve()),
-        torch_dtype=resolve_dtype(args.dtype),
-    )
-    tokenizer = AutoTokenizer.from_pretrained(str(args.base_model_path.resolve()))
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    add_grc_tokens_if_missing(tokenizer, model, num_levels=args.num_levels)
+        sft_rows = gather_object_list(local_sft_rows, world_size=world_size)
+        verl_rows = gather_object_list(local_verl_rows, world_size=world_size)
+        summary = gather_summary_dict(local_summary, world_size=world_size)
+        summary["num_raw_samples"] = int(total_interactions)
 
-    sft_rows, verl_rows, summary = build_sft_rows(
-        interactions=interactions,
-        sid_lookup=sid_lookup,
-        model=model,
-        tokenizer=tokenizer,
-        args=args,
-    )
+        if not is_main_process(rank):
+            return
 
-    print_preview_rows("SFT", sft_rows)
-    print_preview_rows("VERL", verl_rows)
+        sft_rows = sort_and_strip_rows(sft_rows, extra_sort_keys=["draft_rank"])
+        verl_rows = sort_and_strip_rows(verl_rows)
 
-    sft_df = pd.DataFrame(sft_rows)
-    args.sft_output_path.parent.mkdir(parents=True, exist_ok=True)
-    sft_df.to_parquet(args.sft_output_path, index=False)
-    print(f"Saved SFT dataset to {args.sft_output_path} ({len(sft_df)} rows)")
+        print_preview_rows("SFT", sft_rows)
+        print_preview_rows("VERL", verl_rows)
 
-    if args.verl_output_path is not None:
-        verl_df = pd.DataFrame(verl_rows)
-        args.verl_output_path.parent.mkdir(parents=True, exist_ok=True)
-        verl_df.to_parquet(args.verl_output_path, index=False)
-        print(f"Saved verl RL dataset to {args.verl_output_path} ({len(verl_df)} rows)")
+        sft_df = pd.DataFrame(sft_rows)
+        args.sft_output_path.parent.mkdir(parents=True, exist_ok=True)
+        sft_df.to_parquet(args.sft_output_path, index=False)
+        print(f"Saved SFT dataset to {args.sft_output_path} ({len(sft_df)} rows)")
 
-    metadata_cache_output_path = (
-        args.metadata_cache_output_path
-        if args.metadata_cache_output_path is not None
-        else args.sft_output_path.with_name(f"{args.sft_output_path.stem}.metadata_cache.jsonl")
-    )
-    save_normalized_metadata(sid_lookup, metadata_cache_output_path)
-    print(f"Saved normalized metadata cache to {metadata_cache_output_path}")
+        if args.verl_output_path is not None:
+            verl_df = pd.DataFrame(verl_rows)
+            args.verl_output_path.parent.mkdir(parents=True, exist_ok=True)
+            verl_df.to_parquet(args.verl_output_path, index=False)
+            print(f"Saved verl RL dataset to {args.verl_output_path} ({len(verl_df)} rows)")
 
-    summary_output_path = (
-        args.summary_output_path
-        if args.summary_output_path is not None
-        else args.sft_output_path.with_name(f"{args.sft_output_path.stem}.summary.json")
-    )
-    save_summary(sft_df, summary, summary_output_path)
-    print(f"Saved dataset summary to {summary_output_path}")
+        metadata_cache_output_path = (
+            args.metadata_cache_output_path
+            if args.metadata_cache_output_path is not None
+            else args.sft_output_path.with_name(f"{args.sft_output_path.stem}.metadata_cache.jsonl")
+        )
+        save_normalized_metadata(sid_lookup, metadata_cache_output_path)
+        print(f"Saved normalized metadata cache to {metadata_cache_output_path}")
+
+        summary_output_path = (
+            args.summary_output_path
+            if args.summary_output_path is not None
+            else args.sft_output_path.with_name(f"{args.sft_output_path.stem}.summary.json")
+        )
+        save_summary(sft_df, summary, summary_output_path)
+        print(f"Saved dataset summary to {summary_output_path}")
+    finally:
+        cleanup_distributed()
 
 
 if __name__ == "__main__":

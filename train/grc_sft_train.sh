@@ -1,9 +1,9 @@
 #!/bin/bash
 
-MODEL_DIR="/path/to/warmup_or_base_model"
-TRAIN_DATA="./train/grc_sft_train.parquet"
-VAL_DATA="./train/grc_sft_val.parquet"
-OUTPUT_DIR="/path/to/grc_sft_output"
+MODEL_DIR="/mnt/cfs/chubaofs_ads_train_image/ouchuang/bias/0.6B_sft"
+TRAIN_DATA="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_grc/grc_sft_train.parquet"
+VAL_DATA="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_grc/grc_sft_val.parquet"
+OUTPUT_DIR="/mnt/cfs/chubaofs_ads_train_image/ouchuang/bias/0.6B_grc_sft"
 
 NUM_GPUS=8
 USE_LORA=true
@@ -26,6 +26,11 @@ DATALOADER_NUM_WORKERS=4
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}/.."
+
+LOCAL_LOG_DIR="./train/logs"
+LOG_PATH="${LOCAL_LOG_DIR}/grc_sft_train.log"
+mkdir -p "${LOCAL_LOG_DIR}"
+mkdir -p "${OUTPUT_DIR}"
 
 DEEPSPEED_CMD=(
   deepspeed
@@ -78,4 +83,5 @@ DEEPSPEED_CMD+=(
 )
 
 export WANDB_MODE=offline
-"${DEEPSPEED_CMD[@]}"
+echo "Writing training log to ${LOG_PATH}"
+"${DEEPSPEED_CMD[@]}" 2>&1 | tee -a "${LOG_PATH}"

@@ -41,6 +41,7 @@ run_build() {
         LAUNCH_CMD=(
             torchrun
             --nproc_per_node "${NUM_GPUS}"
+            --master_port 29501
             ./train/build_grc_sft_dataset.py
         )
     else

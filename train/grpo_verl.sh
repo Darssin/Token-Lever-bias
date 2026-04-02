@@ -3,10 +3,11 @@
 # This script assumes you are running inside a verl environment / container.
 # Official repo: https://github.com/volcengine/verl
 
-MODEL_PATH="/mnt/cfs/chubaofs_ads_train_image/ouchuang/bias/0.6B_grc_sft"
+MODEL_PATH="/mnt/cfs/chubaofs_ads_train_image/wubintao/models/TLB_demo/Beauty/0.6B_grc_sft"
 TRAIN_RL_DATA="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_grc/grc_verl_train.parquet"
 VAL_RL_DATA="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_grc/grc_verl_val.parquet"
 METADATA_CACHE_PATH="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_grc/grc_metadata_cache.jsonl"
+CHECKPOINT_ROOT="/mnt/cfs/chubaofs_ads_train_image/wubintao/models/TLB_demo/Beauty/0.6B_grc_grpo"
 
 PROJECT_NAME="grc_verl"
 EXPERIMENT_NAME="grc_leaf_brand_grpo"
@@ -42,6 +43,7 @@ REWARD_FUNC_PATH="${REPO_ROOT}/train/grc_verl_reward.py"
 LOCAL_LOG_DIR="./train/logs"
 LOG_PATH="${LOCAL_LOG_DIR}/grpo_verl.log"
 mkdir -p "${LOCAL_LOG_DIR}"
+mkdir -p "${CHECKPOINT_ROOT}"  
 
 export GRC_METADATA_PATH="${METADATA_CACHE_PATH}"
 export GRC_BETA_COR="${GRC_BETA_COR}"
@@ -80,6 +82,7 @@ VERL_CMD=(
   custom_reward_function.name=compute_score
   trainer.critic_warmup=0
   trainer.logger='["console"]'
+  trainer.default_local_dir="${CHECKPOINT_ROOT}" 
   trainer.project_name="${PROJECT_NAME}"
   trainer.experiment_name="${EXPERIMENT_NAME}"
   trainer.n_gpus_per_node="${NUM_GPUS}"

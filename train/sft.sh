@@ -1,9 +1,9 @@
 #!/bin/bash
 
-MODEL_DIR="/mnt/cfs/chubaofs_ads_train_image/ouchuang/bias/0.6B_warmup/checkpoint-5250"
+MODEL_DIR="/mnt/cfs/chubaofs_ads_train_image/wubintao/models/TLB_demo/Beauty/0.6B_warmup_5250"
 TRAIN_DATA="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_datasets/training_sid_only_data_train.parquet"
 VAL_DATA="/mnt/cfs/chubaofs_ads_train_image/wubintao/datasets/minionerec/data/amazon_reviews_2014_rpg/Beauty/processed_datasets/training_sid_only_data_valid.parquet"
-OUTPUT_DIR="/mnt/cfs/chubaofs_ads_train_image/ouchuang/bias/0.6B_sft/"
+OUTPUT_DIR="/mnt/cfs/chubaofs_ads_train_image/wubintao/models/TLB_demo/Beauty/0.6B_sft"
 USE_LORA=false
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,13 +37,13 @@ DEEPSPEED_CMD+=(
     --bf16 True
     --deepspeed ./train/ds_config_zero2.json
     --output_dir "${OUTPUT_DIR}"
-    --logging_dir "/export/App/training_platform/PinoModel/models/log_dir"
-    --logging_steps 10
+    --logging_dir "/media/cfs/wubintao.6/experiment/tensorboard/TLB_demo/beauty/sft0.6B"
+    --logging_steps 5
     --eval_strategy steps
-    --eval_steps 20
+    --eval_steps 5
     --eval_on_start true
     --save_strategy epoch
-    --save_total_limit 10
+    --save_total_limit 20
     --metric_for_best_model eval_loss
     --greater_is_better False
     --load_best_model_at_end True

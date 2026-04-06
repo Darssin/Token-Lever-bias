@@ -45,6 +45,8 @@ def parse_args():
     parser.add_argument("--num_levels", type=int, default=4)
     parser.add_argument("--codebook_size", type=int, default=256)
     parser.add_argument("--dtype", type=str, default="auto", choices=["auto", "bf16", "fp16", "fp32"])
+    parser.add_argument("--repair_verl_extra_info_input", type=Path, default=None)
+    parser.add_argument("--repair_verl_extra_info_output", type=Path, default=None)
     return parser.parse_args()
 
 
@@ -97,7 +99,38 @@ def chunked(items: Sequence[Any], chunk_size: int):
 def format_preview_value(value: Any) -> str:
     if value is None:
         return ""
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, indent=2)
     return str(value)
+
+
+def normalize_extra_info(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def normalize_reward_model(value: Any, fallback_ground_truth: Any = None) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        result = dict(value)
+        if "ground_truth" not in result and fallback_ground_truth is not None:
+            result["ground_truth"] = fallback_ground_truth
+        return result
+    if fallback_ground_truth is None:
+        return {}
+    return {
+        "style": "rule",
+        "ground_truth": fallback_ground_truth,
+    }
 
 
 def print_preview_rows(title: str, rows: Sequence[Dict[str, Any]], limit: int = 3):
@@ -333,16 +366,17 @@ def build_sft_rows(
                     "source_row_index": int(row["__row_idx__"]),
                     "prompt": build_generation_prompt(row["input"]),
                     "ground_truth": target_sid,
+                    "reward_model": {
+                        "style": "rule",
+                        "ground_truth": target_sid,
+                    },
                     "data_source": args.interaction_data_path.stem,
-                    "extra_info": json.dumps(
-                        {
-                            "user_id": str(row.get("user_id", "")),
-                            "target_item_id": target_meta["item_id"],
-                            "target_leaf_category": target_meta["leaf_category"],
-                            "target_brand": target_meta["brand"],
-                        },
-                        ensure_ascii=False,
-                    ),
+                    "extra_info": {
+                        "user_id": str(row.get("user_id", "")),
+                        "target_item_id": target_meta["item_id"],
+                        "target_leaf_category": target_meta["leaf_category"],
+                        "target_brand": target_meta["brand"],
+                    },
                 }
             )
 
@@ -479,8 +513,45 @@ def save_summary(sft_df: pd.DataFrame, summary: Dict[str, Any], output_path: Pat
     output_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def repair_verl_extra_info_parquet(input_path: Path, output_path: Path):
+    dataframe = pd.read_parquet(input_path)
+    if "extra_info" not in dataframe.columns:
+        raise ValueError(f"Input parquet is missing required column 'extra_info': {input_path}")
+
+    dataframe = dataframe.copy()
+    dataframe["extra_info"] = dataframe["extra_info"].map(normalize_extra_info)
+    ground_truths = dataframe["ground_truth"] if "ground_truth" in dataframe.columns else [None] * len(dataframe)
+    if "reward_model" in dataframe.columns:
+        dataframe["reward_model"] = [
+            normalize_reward_model(value, fallback_ground_truth=ground_truth)
+            for value, ground_truth in zip(dataframe["reward_model"], ground_truths)
+        ]
+    else:
+        dataframe["reward_model"] = [
+            normalize_reward_model(None, fallback_ground_truth=ground_truth) for ground_truth in ground_truths
+        ]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    dataframe.to_parquet(output_path, index=False)
+
+    print(f"Repaired verl dataset saved to {output_path} ({len(dataframe)} rows)")
+    if len(dataframe) > 0:
+        print("Sample repaired extra_info:")
+        print(format_preview_value(dataframe.iloc[0]["extra_info"]))
+        print("Sample repaired reward_model:")
+        print(format_preview_value(dataframe.iloc[0]["reward_model"]))
+
+
 def main():
     args = parse_args()
+    if args.repair_verl_extra_info_input is not None:
+        if args.repair_verl_extra_info_output is None:
+            raise ValueError("--repair_verl_extra_info_output must be provided with --repair_verl_extra_info_input")
+        repair_verl_extra_info_parquet(
+            input_path=args.repair_verl_extra_info_input,
+            output_path=args.repair_verl_extra_info_output,
+        )
+        return
+
     rank, world_size, local_rank = setup_distributed()
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
 

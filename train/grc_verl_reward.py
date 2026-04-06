@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import traceback
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -87,10 +88,21 @@ def _semantic_correction_score(
     return float(corrected_value == target_value)
 
 
+def _debug_enabled() -> bool:
+    value = os.getenv("GRC_REWARD_DEBUG", "")
+    return value.lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _debug_print(*parts):
+    if _debug_enabled():
+        print("[grc_reward_debug]", *parts)
+
+
 def _compute_reward(ground_truth: str, solution_str: str) -> float:
     sid_lookup = _get_sid_lookup()
     target_meta = sid_lookup.get(ground_truth)
     if target_meta is None:
+        _debug_print("target_meta_missing", ground_truth)
         return 0.0
 
     parsed = parse_grc_response(solution_str)
@@ -99,6 +111,16 @@ def _compute_reward(ground_truth: str, solution_str: str) -> float:
     reflection_tokens = parsed.get("reflection_tokens", [])
 
     if not draft_sid or not corrected_sid:
+        _debug_print(
+            "invalid_parse",
+            {
+                "ground_truth": ground_truth,
+                "draft_sid": draft_sid,
+                "corrected_sid": corrected_sid,
+                "reflection_tokens": reflection_tokens,
+                "solution_str": solution_str,
+            },
+        )
         return 0.0
 
     loc_pred, leaf_pred, brand_pred = _extract_reflection_labels(reflection_tokens)
@@ -165,12 +187,47 @@ def _compute_reward(ground_truth: str, solution_str: str) -> float:
 
     reward_delta = max(0.0, float(hits_corrected - hits_draft))
 
-    return float(reward_task + beta_cor * (beta_loc * reward_loc + beta_sem * reward_sem + reward_delta))
+    total_reward = float(reward_task + beta_cor * (beta_loc * reward_loc + beta_sem * reward_sem + reward_delta))
+
+    _debug_print(
+        "reward_breakdown",
+        {
+            "ground_truth": ground_truth,
+            "draft_sid": draft_sid,
+            "corrected_sid": corrected_sid,
+            "reflection_tokens": reflection_tokens,
+            "loc_pred": loc_pred,
+            "leaf_pred": leaf_pred,
+            "brand_pred": brand_pred,
+            "loc_gt": loc_gt.label_token,
+            "leaf_gt": leaf_gt.label_token,
+            "brand_gt": brand_gt.label_token,
+            "hits_draft": hits_draft,
+            "hits_corrected": hits_corrected,
+            "reward_task": reward_task,
+            "reward_loc_label": reward_loc_label,
+            "reward_loc_cor": reward_loc_cor,
+            "reward_loc": reward_loc,
+            "reward_sem_label": reward_sem_label,
+            "reward_sem_cor": reward_sem_cor,
+            "reward_sem": reward_sem,
+            "reward_delta": reward_delta,
+            "total_reward": total_reward,
+        },
+    )
+
+    return total_reward
 
 
 def compute_score(data_source: str, solution_str: str, ground_truth: str, extra_info: Any = None) -> float:
-    _safe_json_loads(extra_info)
+    parsed_extra_info = _safe_json_loads(extra_info)
     try:
         return _compute_reward(ground_truth=ground_truth, solution_str=solution_str)
-    except Exception:
+    except Exception as exc:
+        print("[grc_reward_error]", repr(exc))
+        print("[grc_reward_error] data_source:", data_source)
+        print("[grc_reward_error] ground_truth:", ground_truth)
+        print("[grc_reward_error] extra_info:", parsed_extra_info)
+        print("[grc_reward_error] solution_str:", solution_str)
+        traceback.print_exc()
         return 0.0
